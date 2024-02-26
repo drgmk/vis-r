@@ -1,0 +1,9 @@
+[project]
+name = "vis-r"
+version = "0.0.1"
+dependencies = [
+    "numpy", "scipy", "matplotlib", "arviz", "corner", "frank", "cmdstanpy"
+]
+
+[project.scripts]
+almastan = "vis_r.stan_hankel:alma_stan_radial"
