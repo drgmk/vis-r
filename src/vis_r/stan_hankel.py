@@ -44,7 +44,7 @@ M2 Pro is nearly 2x faster again.
 def alma_stan_radial():
 
     # setup
-    parser = argparse.ArgumentParser(description='almastan (radial)')
+    parser = argparse.ArgumentParser(description='stan implementation of vis-r')
     parser.add_argument('-v', dest='visfiles', metavar=('vis1.npy', 'vis2.npy'), nargs='+', required=True,
                         help='Numpy save files (u, v, re, im, w, wav, file)')
     parser.add_argument('-t', dest='type', metavar='power', default='power',

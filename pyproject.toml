@@ -6,4 +6,4 @@ dependencies = [
 ]
 
 [project.scripts]
-almastan = "vis_r.stan_hankel:alma_stan_radial"
+vis-r = "vis_r.stan_hankel:alma_stan_radial"
