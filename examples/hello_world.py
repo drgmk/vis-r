@@ -1,4 +1,5 @@
 # minimal example script
+import sys
 import numpy as np
 from scipy.special import jn_zeros
 import matplotlib.pyplot as plt
@@ -9,11 +10,17 @@ import vis_r
 
 # initial parameters
 params = ['dra', 'ddec', 'PA', 'inc', 'flux', 'r0', 'dr', 'dz']
-p0 = np.array([0.03, 0.03, 26.7, 76.7, 0.015, 1.08, 0.06, 0.04])
+if len(sys.argv) > 3:
+    p0 = np.array(sys.argv[3:], dtype=float)
+else:
+    p0 = np.array([0.03, 0.03, 26.7, 76.7, 0.015, 1.08, 0.06, 0.04])
 
 # get visibilities
-uv_file = '../data/hr4796.selfcal.npy'
-u, v, Re, Im, w, wavelength, ms_file = np.load(uv_file, allow_pickle=True)
+if len(sys.argv) > 1:
+    u, v, Re, Im, w = vis_r.read_vis(sys.argv[1])
+else:
+    uv_file = '../data/hr4796.selfcal.npy'
+    u, v, Re, Im, w, wavelength, ms_file = np.load(uv_file, allow_pickle=True)
 
 # estimate re-weighting factor
 # so that chi^2 for null model would be 1, and d.o.f = 2*len(w)
@@ -22,7 +29,11 @@ print('reweighting factor is {}'.format(reweight_factor))
 w *= reweight_factor
 
 # bin the data
-sz = 4
+if len(sys.argv) > 2:
+    sz = float(sys.argv[2])
+else:
+    sz = 4
+
 u, v, Re, Im, w = vis_r.bin_uv(u, v, Re, Im, w, size_arcsec=sz)
 
 # set up the DHT
@@ -45,6 +56,9 @@ while True:
 h = frank.hankel.DiscreteHankelTransform(r_max*arcsec, nhpt)
 Rnk, Qnk = h.get_collocation_points(r_max*arcsec, nhpt)
 
+print(f'R_out: {r_max}, N: {nhpt}')
+print(f'min/max q_k: {Qnk[0]}, {Qnk[-1]}')
+print(f'min/max u,v: {uvmin}, {uvmax}')
 
 # radial profile
 def r_prof(r, par):
@@ -79,7 +93,6 @@ def lnprob(p, test=False):
     # chi^2
     chi2 = np.sum(((Re-vis.real)**2.0 + (Im-vis.imag)**2.0) * w)
     if test:
-        print(-0.5*chi2)
         return ruv, fth, vis
 
     return -0.5 * chi2

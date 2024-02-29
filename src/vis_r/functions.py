@@ -62,6 +62,10 @@ def bin_uv(u_, v_, re_, im_, w_, size_arcsec=None):
         Passed to get_duv to get bin size.
     """
 
+    if size_arcsec == 0:
+        print('no binning')
+        return u_, v_, re_, im_, w_
+
     uneg = u_ < 0
     u_ = np.abs(u_)
     v_[uneg] = -v_[uneg]
@@ -85,6 +89,9 @@ def bin_uv(u_, v_, re_, im_, w_, size_arcsec=None):
     re = (re[ok] / w[ok]).flatten()
     im = (im[ok] / w[ok]).flatten()
     w = w[ok].flatten()
+
+    print(f' original nvis:{len(u_)}')
+    print(f' binned nvis:{len(u)}')
 
     return u, v, re, im, w
 
