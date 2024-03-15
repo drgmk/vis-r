@@ -1,4 +1,4 @@
-# minimal example script
+# minimal example script, this runs in less than 10s on an M2 Mac
 import sys
 import numpy as np
 from scipy.special import jn_zeros
@@ -135,7 +135,7 @@ ruv, fth, vis = lnprob(p, test=True)
 fig, ax = plt.subplots()
 ax.scatter(ruv/1e6, Re, s=0.1)
 ax.scatter(ruv/1e6, vis.real, s=0.1, color='yellow')
-ax.set_xlabel('baseline / M$\lambda$')
+ax.set_xlabel('baseline / M$\\lambda$')
 ax.set_ylabel('flux / Jy')
 fig.tight_layout()
 fig.savefig('example-vis.png')

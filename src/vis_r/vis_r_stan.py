@@ -4,6 +4,7 @@ import argparse
 import pickle
 import numpy as np
 from scipy.special import jn_zeros
+import cmdstanpy
 from cmdstanpy import CmdStanModel
 import matplotlib.pyplot as plt
 import arviz as az
@@ -11,7 +12,7 @@ import corner
 import frank
 
 from . import functions
-from . import stan_hankel_code
+from . import vis_r_stan_code
 
 # try for cmdstan installed with cmdstanpy.install_cmdstan()
 # temporary fix until higher versions available in conda
@@ -41,7 +42,8 @@ This runs ~3x faster than Intel Mac, and >10x faster than osx-64 on an M2.
 M2 Pro is nearly 2x faster again.
 '''
 
-def alma_stan_radial():
+
+def vis_r_stan_radial():
 
     # setup
     parser = argparse.ArgumentParser(description='stan implementation of vis-r')
@@ -65,7 +67,7 @@ def alma_stan_radial():
                         help='Scaling for norm')
     parser.add_argument('--r-mul', dest='r_mul', metavar='1', type=float, default=1,
                         help='Scaling for radius')
-    parser.add_argument('--star', dest='star', metavar=('flux'),
+    parser.add_argument('--star', dest='star', metavar='flux',
                         type=float, nargs=1, help='Point source at disk center')
     parser.add_argument('--bg', dest='bg', metavar=('dra', 'ddec', 'f', 'r', 'pa', 'inc'), action='append',
                         type=float, nargs=6, help='Resolved background sources')
@@ -87,8 +89,8 @@ def alma_stan_radial():
                         help="Don't save model")
     parser.add_argument('--save-chains', dest='save_chains', action='store_true', default=False,
                         help="Export model chains as numpy")
-    parser.add_argument('--no-pf', dest='pf', action='store_false', default=True,
-                        help="Don't run pathfinder")
+    parser.add_argument('--pf', dest='pf', action='store_true', default=False,
+                        help="Run pathfinder for initial posteriors")
 
     args = parser.parse_args()
 
@@ -99,8 +101,10 @@ def alma_stan_radial():
     visfiles = args.visfiles
 
     # set up initial parameters
-    inits = {}
-    inits['dra'], inits['ddec'], inits['pa'], inits['inc'] = args.g
+    inits = {'dra': args.g[0],
+             'ddec': args.g[1],
+             'pa': args.g[2],
+             'inc': args.g[3]}
 
     p = np.array(args.p)
     inits['norm'] = p[:, 0]
@@ -168,7 +172,7 @@ def alma_stan_radial():
             par = pickle.load(f)
             mul = pickle.load(f)
             std = pickle.load(f)
-            metric = pickle.load(f)
+            # metric = pickle.load(f)
 
         for p in par:
             if '_' not in p:
@@ -194,12 +198,12 @@ def alma_stan_radial():
         data['npt'] = len(pt)
 
     # load data
-    u_ = v_ = Re_ = Im_ = w_ = np.array([])
+    u_ = v_ = re_ = im_ = w_ = np.array([])
     for i, f in enumerate(visfiles):
-        u, v, Re, Im, w = functions.read_vis(f)
-        print(f'loading: {f} with nvis:{len(u)}')
+        u, v, re, im, w = functions.read_vis(f)
+        print(f'loading: {f} with nvis: {len(u)}')
 
-        reweight_factor = 2 * len(w) / np.sum((Re**2.0 + Im**2.0) * w)
+        reweight_factor = 2 * len(w) / np.sum((re**2.0 + im**2.0) * w)
         print(f' reweighting factor would be {reweight_factor}')
         if args.reweight:
             print(' applying reweighting')
@@ -208,29 +212,29 @@ def alma_stan_radial():
         u_ = np.append(u_, u)
         v_ = np.append(v_, v)
         w_ = np.append(w_, w)
-        Re_ = np.append(Re_, Re)
-        Im_ = np.append(Im_, Im)
+        re_ = np.append(re_, re)
+        im_ = np.append(im_, im)
 
     if args.sz > 0:
         data['u'], data['v'], data['re'],  data['im'], data['w'] = \
-            functions.bin_uv(u_, v_, Re_, Im_, w, size_arcsec=args.sz)
+            functions.bin_uv(u_, v_, re_, im_, w, size_arcsec=args.sz)
     else:
         data['u'] = u_
         data['v'] = v_
-        data['re'] = Re_
-        data['im'] = Im_
+        data['re'] = re_
+        data['im'] = im_
         data['w'] = w_
 
     data['nvis'] = len(data['u'])
     data['sigma'] = 1/np.sqrt(data['w'])
 
-    print(f" original nvis:{len(u_)}, fitting nvis:{data['nvis']}")
+    print(f" original nvis: {len(u_)}, fitting nvis: {data['nvis']}")
 
     arcsec = np.pi/180/3600
     uvmax = np.max(np.sqrt(data['u']**2 + data['v']**2))
     uvmin = np.min(np.sqrt(data['u']**2 + data['v']**2))
     # estimate lowest frequency given inclination, and include a safety factor
-    fac = 1.5 # safety factor
+    fac = 1.5  # safety factor
     r_max = jn_zeros(0, 1)[0] / (2*np.pi*uvmin*np.cos(inits['inc']/mul['inc'])) / arcsec * fac
 
     nhpt = 1
@@ -253,16 +257,16 @@ def alma_stan_radial():
     if 2*Qnk[0] > uvmin:
         print(f' WARNING: minimum Q not much smaller than minimum u,v')
         print(f'          potential problem for highly inclined disks')
-    print(f' R_max:{r_max}')
-    print(f' Q_min:{Qnk[0]}, uv_min:{uvmin}')
-    print(f' Q_max:{Qnk[-1]}, uv_max:{uvmax}')
+    print(f' R_max: {r_max}')
+    print(f' Q_min: {Qnk[0]}, uv_min: {uvmin}')
+    print(f' Q_max: {Qnk[-1]}, uv_max: {uvmax}')
 
     # get stan code and compile
-    code = stan_hankel_code.get_code(args.type, gq=False,
-                                     star=args.star is not None,
-                                     bg=data['nbg'] > 0, pt=data['npt'] > 0,
-                                     inc_lim=args.inc_lim, pa_lim=args.pa_lim,
-                                     z_prior=args.zlim)
+    code = vis_r_stan_code.get_code(args.type, gq=False,
+                                    star=args.star is not None,
+                                    bg=data['nbg'] > 0, pt=data['npt'] > 0,
+                                    inc_lim=args.inc_lim, pa_lim=args.pa_lim,
+                                    z_prior=args.zlim)
 
     stanfile = f'/tmp/alma{str(np.random.randint(100_000))}.stan'
     with open(stanfile, 'w') as f:
@@ -313,7 +317,7 @@ def alma_stan_radial():
         pickle.dump(fit.metric, f)
 
     df = fit.summary(percentiles=(5, 95))
-    print(df[df.index.str.contains('_') == False])
+    print(df[df.index.str.contains('_') is False])
     # print(df.filter(regex='[a-z]_', axis=0))
     # print(fit.diagnose())
 
@@ -344,11 +348,11 @@ def alma_stan_radial():
     if args.save:
 
         # save radial profiles
-        code = stan_hankel_code.get_code(args.type, gq='prof',
-                                         star=args.star is not None,
-                                         bg=data['nbg'] > 0, pt=data['npt'] > 0,
-                                         inc_lim=args.inc_lim, pa_lim=args.pa_lim,
-                                         z_prior=args.zlim)
+        code = vis_r_stan_code.get_code(args.type, gq='prof',
+                                        star=args.star is not None,
+                                        bg=data['nbg'] > 0, pt=data['npt'] > 0,
+                                        inc_lim=args.inc_lim, pa_lim=args.pa_lim,
+                                        z_prior=args.zlim)
         with open(stanfile, 'w') as f:
             f.write(code)
 
@@ -370,11 +374,11 @@ def alma_stan_radial():
         fig.savefig(f"{outdir}/profile.pdf")
 
         # save model visibilities
-        code = stan_hankel_code.get_code(args.type, gq='vis',
-                                         star=args.star is not None,
-                                         bg=data['nbg'] > 0, pt=data['npt'] > 0,
-                                         inc_lim=args.inc_lim, pa_lim=args.pa_lim,
-                                         z_prior=args.zlim)
+        code = vis_r_stan_code.get_code(args.type, gq='vis',
+                                        star=args.star is not None,
+                                        bg=data['nbg'] > 0, pt=data['npt'] > 0,
+                                        inc_lim=args.inc_lim, pa_lim=args.pa_lim,
+                                        z_prior=args.zlim)
         with open(stanfile, 'w') as f:
             f.write(code)
 
@@ -388,14 +392,16 @@ def alma_stan_radial():
 
         for f in visfiles:
             print(f'saving model for {os.path.basename(f)}')
-            u, v, Re, Im, w = functions.read_vis(f)
+            u, v, re, im, w = functions.read_vis(f)
 
             data['nvis'] = len(u)
             data['u'] = u
             data['v'] = v
-            data['re'] = Re
-            data['im'] = Im
+            data['re'] = re
+            data['im'] = im
             data['sigma'] = 1/np.sqrt(w)
             gq = model.generate_quantities(data=data, previous_fit=fit1)
             vis_mod = gq.stan_variables()['vismod_re'] + 1j*gq.stan_variables()['vismod_im']
-            np.save(f"{outdir}/{os.path.basename(f).replace('.npy', '-vismod.npy')}", vis_mod)
+            f_ = os.path.splitext(os.path.basename(f))
+            f_save = f_[0] + '-vismod' + f_[1]
+            np.save(f"{outdir}/{f_save}", vis_mod)

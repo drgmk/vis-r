@@ -1,19 +1,23 @@
-def functions(type):
+"""
+All of this is python code that writes stan code.
+"""
+
+def functions(type_):
     """Add radial functions here to model different profiles."""
 
-    if type == 'power':
+    if type_ == 'power':
         func = "fout[i] = (1/( (r/p[2,i])^(-p[5,i]*p[3,i]) + (r/p[2,i])^(-p[5,i]*p[4,i]) )^(1/p[5,i]) )';"
 
-    elif type == 'erf_power':
+    elif type_ == 'erf_power':
         func = "fout[i] = ( erf_in(r, p[2,i], p[3,i]) .* (r/p[2,i])^(p[4,i]) )';"
 
-    elif type == 'erf2_power':
+    elif type_ == 'erf2_power':
         func = "fout[i] = ( erf_in(r, p[2,i], p[4,i]) .* erf_out(r, p[5,i], p[6,i]) .* (r/p[2,i])^(p[3,i]) )';"
 
-    elif type == 'gauss':
+    elif type_ == 'gauss':
         func = "fout[i] = gauss(r, p[2,i], p[3,i])';"
 
-    elif type == 'gauss2':
+    elif type_ == 'gauss2':
         func = """
     for (j in 1:N_r) {
         if (r[j] < p[2,i]) {
@@ -147,6 +151,7 @@ transformed data {
 
 }
 """
+
 
 def parameters(pn, pl, pu, star=False, bg=False, pt=False, inc_lim=False, pa_lim=False, zh_lim=True, nbg_lim=True):
     inc = '<lower=0, upper=inc_mul*pi()/2>' if inc_lim else ''
@@ -436,38 +441,38 @@ def model_lnprob(pn, star=False, bg=False, pt=False, z_prior=None):
 """
 
 
-def get_code(type, star=False, bg=False, pt=False, gq=False,
+def get_code(type_, star=False, bg=False, pt=False, gq=False,
              inc_lim=False, pa_lim=False, z_prior=None):
 
-    if type == 'power':
+    if type_ == 'power':
         pn = ['norm', 'r', 'ai', 'ao', 'gam']
         pl = [0,       0,   0,    None, 0]
         pu = [None,  None,  None, 0,    None]
-    elif type == 'erf_power':
+    elif type_ == 'erf_power':
         pn = ['norm', 'r', 'sigi', 'ao']
         pl = [0,       0,   0,      None]
         pu = [None,  None,  None,   0]
-    elif type == 'erf2_power':
+    elif type_ == 'erf2_power':
         pn = ['norm', 'ri', 'ai', 'sigi', 'ro', 'sigo']
         pl = [0,       0,    0,    0,      None, 0]
         pu = [None,  None,   None, None,   None, None]
-    elif type == 'gauss':
+    elif type_ == 'gauss':
         pn = ['norm', 'r', 'dr']
         pl = [0,       0,   0]
         pu = [None,  None,  None]
-    elif type == 'gauss2':
+    elif type_ == 'gauss2':
         pn = ['norm', 'r', 'dri', 'dro']
         pl = [0,       0,   0,     0]
         pu = [None,  None,  None,  None]
     else:
-        exit(f'need to add function: {type}')
+        exit(f'need to add function: {type_}')
 
     model = "model {\n" + model_core(pn, star=star, bg=bg, pt=pt) + \
             model_lnprob(pn, star=star, bg=bg, pt=pt, z_prior=z_prior)
 
     generated_quantities = "generated quantities {" + model_core(pn, star=star, bg=bg, pt=pt, gq=gq) + "\n}"
 
-    code = functions(type) + data(pn, star=star, bg=bg, pt=pt) + transformed_data + \
+    code = functions(type_) + data(pn, star=star, bg=bg, pt=pt) + transformed_data + \
            parameters(pn, pl, pu, star=star, bg=bg, pt=pt, inc_lim=inc_lim, pa_lim=pa_lim) + \
            transformed_parameters(pn, star=star, bg=bg, pt=pt)
     if gq is not False:

@@ -6,7 +6,11 @@ def read_vis(f):
     """Read visibilities in a few niche formats."""
     if '.npy' in f:
         # my format, u/v already in wavelengths
-        u, v, re, im, w, wavelength_, ms_file_ = np.load(f, allow_pickle=True)
+        tmp = np.load(f, allow_pickle=True)
+        if len(tmp) > 5:
+            u, v, re, im, w, wavelength_, ms_file_ = tmp
+        else:
+            u, v, re, im, w = tmp
     elif '.txt' in f:
         # 3 comment lines, line 2 is average wave in m
         # then u[m], v[m], Re, Im, w (5 lines)
@@ -118,3 +122,10 @@ def uv_trans(u, v, PA, inc, return_uv=False):
         return urot, vrot
     ruv = np.hypot(urot*np.cos(inc), vrot)
     return urot, ruv
+
+
+def r_prof_gauss(r, par):
+    return np.exp(-0.5*np.square((r - par[0])/par[1]))
+
+def r_prof_power(r, par):
+    return 1/((r/par[0])**(-par[3]*par[1]) + (r/par[0])**(-par[3]*par[2]))**(1/par[3])
