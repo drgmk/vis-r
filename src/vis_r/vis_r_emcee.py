@@ -1,26 +1,43 @@
 """Script for fitting with emcee.
 
 For reasons I don't understand, but possibly related to global variables, this script runs
-about 5x faster as a script compared to as a function. It's still set up to be run as a
-command line executable, but is set up by vis_r_emcee_main.py which has the entry point.
+about 5x faster as a script compared to as a function via an entry point. It's still set up
+to be run as a command line executable, but is set up by vis_r_emcee_main.py which has the
+entry point.
 """
 
 import os
 import argparse
 import numpy as np
 from scipy.special import jn_zeros
+from scipy.optimize import minimize
 import matplotlib.pyplot as plt
-import multiprocess as mp
+import multiprocess as mp  # for running as script
 import frank
 import emcee
+import corner
 
 from vis_r import functions
+
+
+def pprint(cols):
+    """Print some columns nicely.
+    https://stackoverflow.com/questions/9989334/create-nice-column-output-in-python
+    """
+    rows = []
+    for i in range(len(cols[0])):
+        rows.append([str(c[i]) for c in cols])
+
+    widths = [max(map(len, col)) for col in zip(*rows)]
+    for row in rows:
+        print("  ".join((val.ljust(width) for val, width in zip(row, widths))))
+
 
 # setup
 parser = argparse.ArgumentParser(description='vis-r with emcee')
 parser.add_argument('-v', dest='visfiles', metavar=('vis1.npy', 'vis2.npy'), nargs='+', required=True,
                     help='Numpy save files (u, v, re, im, w, wav, file)')
-parser.add_argument('-t', dest='type', metavar='power', default='gauss',
+parser.add_argument('-t', dest='type', metavar='gauss', default='gauss',
                     help='Model type (power[6], gauss[4])')
 parser.add_argument('-g', dest='g', type=float, nargs=4, required=True,
                     metavar=('dra', 'ddec', 'pa', 'inc'),
@@ -28,7 +45,7 @@ parser.add_argument('-g', dest='g', type=float, nargs=4, required=True,
 parser.add_argument('-p', dest='p', type=float, action='append', required=True, nargs='+',
                     metavar='norm r ... zh',
                     help='Radial component model parameters')
-parser.add_argument('-o', dest='outdir', metavar='./', type=str, default='./',
+parser.add_argument('-o', dest='outdir',  type=str, default=None,
                     help='Folder for output')
 parser.add_argument('--sz', dest='sz', metavar='8.84', type=float, default=8.84,
                     help='Radius (arcsec) for uv binning')
@@ -44,70 +61,114 @@ parser.add_argument('--rmax', dest='rmax', metavar='rmax', type=float, default=N
 #                     help="Limit range of inclinations")
 # parser.add_argument('--pa-lim', dest='pa_lim', action='store_true', default=False,
 #                     help="limit range of position angles")
-# parser.add_argument('--z-lim', dest='zlim', metavar='zlim', type=float, default=None,
-#                     help='1sigma upper limit on z/r')
+parser.add_argument('--z-prior', dest='zprior', metavar='0.2', type=float, default=0.2,
+                    help='1sigma upper limit on z/r')
 parser.add_argument('--rew', dest='reweight', action='store_true', default=False,
                     help="Reweight visibilities")
-parser.add_argument('--no-save', dest='save', action='store_false', default=True,
-                    help="Don't save model")
-parser.add_argument('--save-chains', dest='save_chains', action='store_true', default=False,
-                    help="Export model chains as numpy")
+parser.add_argument('--min', dest='minimize', action='store_true', default=False,
+                    help="Attempt initial minimisation")
+parser.add_argument('--steps', dest='steps', metavar='1400', type=int, default=1400,
+                    help='Number of total steps for emcee')
+parser.add_argument('--keep', dest='keep', metavar='400', type=int, default=400,
+                    help='Number of steps to keep for emcee')
+parser.add_argument('--threads', dest='threads', metavar='Ncpu', type=int, default=None,
+                    help='Number of threads for emcee')
 
 args = parser.parse_args()
 
-outdir = args.outdir.rstrip()
-if not os.path.exists(outdir):
-    os.mkdir(outdir)
-
-visfiles = args.visfiles
-
-# set up initial parameters
+# set up initial parameters, start with geometry
 inits = np.append(args.g, args.p)
-nr = len(args.p)
-params = ['dra', 'ddec', 'PA', 'inc']
+params = ['$\\Delta \\alpha$', '$\\Delta \\delta$', '$\\phi$', '$i$']
 
+# pick a radial profile
+nr = len(args.p)
 if args.type == 'power':
-    params_ = ['norm', 'r', 'ai', 'ao', 'gam', 'dz']
+    params_ = ['$F$', '$r$', '$a_{in}$', '$a_{out}$', '$\\gamma$']
     r_prof = functions.r_prof_power
 elif args.type == 'gauss':
-    params_ = ['norm', 'r', 'dr', 'dz']
+    params_ = ['$F$', '$r$', '$\\sigma_r$']
     r_prof = functions.r_prof_gauss
+elif args.type == 'gauss2':
+    params_ = ['$F$', '$r$', '$\\sigma_{in}$', '$\\sigma_{out}$']
+    r_prof = functions.r_prof_gauss2
+elif args.type == 'erf_power':
+    params_ = ['$F$', '$r$', '$\\sigma_{in}$', '$a_{out}$']
+    r_prof = functions.r_prof_erf_power
+elif args.type == 'erf2_power':
+    params_ = ['$F$', '$r_{in}$', '$a_{out}$', '$\\sigma_{in}$', '$r_{in}$', '$\\sigma_{out}$']
+    r_prof = functions.r_prof_erf2_power
+else:
+    exit(f'Radial model {args.type} not known.')
 
+params_ += ['$\\sigma_z$']
 nrp = len(params_)
-for i in range(nr):
-    for p in params_:
-        params += [f'{p}_{i}']
+if nr > 1:
+    for i in range(nr):
+        for p in params_:
+            params += [f'{p}[{i}]']
+else:
+    params += params_
 
 i = len(inits)
 if args.star:
     istar = i
     i += 1
     inits = np.append(inits, args.star[0])
-    params += ['fstar']
+    params += ['$F_\\star$']
 
 if args.bg:
     ibg = i
     nbg = len(args.bg)
     i += 6*nbg
     inits = np.append(inits, args.bg)
-    params += ['bgx', 'bgy', 'bgn', 'bgr', 'bgpa', 'bgi']
+    params_ = ['$x_{bg}$', '$y_{bg}$', '$F_{bg}$', '$r_{bg}$', '$\\phi_{bg}$', '$i_{bg}$']
+    if nbg > 1:
+        for i in range(nbg):
+            for p in params_:
+                params += [f'{p}[{i}]']
+    else:
+        params += params_
 
 if args.pt:
     ipt = i
     npt = len(args.pt)
     i += 3*npt
     inits = np.append(inits, args.pt)
-    params += ['ptx', 'pty', 'ptn']
+    params_ = ['$x_{pt}$', '$y_{pt}$', '$F_{pt}$']
+    if npt > 1:
+        for i in range(npt):
+            for p in params_:
+                params += [f'{p}[{i}]']
+    else:
+        params += params_
 
 p0 = inits
-for par, p in zip(params, p0):
-    print(f'{par}\t {p}')
+print('\nFitting parameters')
+print('------------------')
+pprint((range(len(p0)), params, p0))
+print('')
+
+# set up output directory
+if args.outdir:
+    outdir = args.outdir.rstrip()
+else:
+    outdir = f'vis-r_{args.type}'
+    if args.star:
+        outdir += '_star'
+    if args.bg:
+        outdir += f'_{nbg}bg'
+    if args.pt:
+        outdir += f'_{npt}pt'
+
+if not os.path.exists(outdir):
+    os.mkdir(outdir)
 
 # load data
+print(f'Loading data')
 u = v = re = im = w = np.array([])
-for i, f in enumerate(visfiles):
+for i, f in enumerate(args.visfiles):
     u_, v_, re_, im_, w_ = functions.read_vis(f)
-    print(f'loading: {f} with nvis: {len(u_)}')
+    print(f' {f} with nvis: {len(u_)}')
 
     reweight_factor = 2 * len(w_) / np.sum((re_**2.0 + im_**2.0) * w_)
     print(f' reweighting factor would be {reweight_factor}')
@@ -122,14 +183,14 @@ for i, f in enumerate(visfiles):
     im = np.append(im, im_)
 
 if args.sz > 0:
+    nu = len(u)
+    print('')
     u, v, re, im, w = functions.bin_uv(u, v, re, im, w, size_arcsec=args.sz)
-
-print(f" original nvis: {len(u)}, fitting nvis: {len(u)}")
+    print(f" original nvis: {nu}, fitting nvis: {len(u)}")
 
 # set up the DHT
 arcsec = np.pi/180/3600
-twopi = 2*np.pi
-arcsec2pi = arcsec*twopi
+arcsec2pi = arcsec*2*np.pi
 
 uvmax = np.max(np.sqrt(u**2 + v**2))
 uvmin = np.min(np.sqrt(u**2 + v**2))
@@ -150,12 +211,17 @@ while True:
 h = frank.hankel.DiscreteHankelTransform(r_max*arcsec, nhpt)
 Rnk, Qnk = h.get_collocation_points(r_max*arcsec, nhpt)
 
-print(f'R_out: {r_max}, N: {nhpt}')
-print(f'min/max q_k: {Qnk[0]}, {Qnk[-1]}')
-print(f'min/max u,v: {uvmin}, {uvmax}')
+print(f'\nR_out: {r_max}, N: {nhpt}')
+pprint(([' min/max q_k: ', ' min/max u,v:'],
+        [f'{Qnk[0]:.0f}', f'{uvmin:.0f}'],
+        [f'{Qnk[-1]:.0f}', f'{uvmax:.0f}']))
 
 
 def lnprob(p, model=False):
+
+    # geometry bounds, may need to revisit inclination upper limit
+    if p[2] < -360 or p[2] > 360 or p[3] < 0 or p[3] > 90:
+        return -np.inf
 
     # u,v rotation
     urot, ruv = functions.uv_trans(u, v, np.deg2rad(p[2]), np.deg2rad(p[3]))
@@ -164,7 +230,7 @@ def lnprob(p, model=False):
     # radial profile, loop over components
     # (should do matrices as in stan implementation)
     rp = p[4:4+nrp*nr].reshape((nr, -1))
-    if np.min(rp) < 0:
+    if np.min(rp[:, 2]) < 0 or np.min(rp[:, -1]) < 0:
         return -np.inf
     rz_part = np.sin(np.deg2rad(p[3])) * urot * arcsec2pi
     for i in range(nr):
@@ -192,15 +258,15 @@ def lnprob(p, model=False):
     rot = (u*p[0] + v*p[1])*arcsec2pi
     vis = vis * np.exp(1j*rot)
 
-    # point background source
+    # point background source, all at once
     if args.pt:
         ptp = p[ipt:ipt+npt*3].reshape((npt, -1))
         if np.min(ptp[:, 2]) < 0:
             return -np.inf
-        rot = ptp[:, 0][np.newaxis, :] * u + ptp[:, 1][np.newaxis, :] * v  # [npt x nvis]
-        vis += np.inner(ptp[:, 2][np.newaxis, :].T, np.exp(1j*rot*arcsec2pi).T).squeeze()  # sum over npt
+        rot = ptp[:, 0][:, np.newaxis] * u + ptp[:, 1][:, np.newaxis] * v  # [npt x nvis]
+        vis += np.inner(ptp[:, 2][:, np.newaxis].T, np.exp(1j*rot*arcsec2pi).T).squeeze()  # sum over npt
 
-    # resolved background source
+    # resolved background source, one at a time
     if args.bg:
         bgp = p[ibg:ibg+nbg*6].reshape((nbg, -1))
         if np.min(bgp[:, 2:]) < 0 or np.max(bgp[:, 4:]) > 180:
@@ -211,24 +277,50 @@ def lnprob(p, model=False):
             rot = bgp[i, 0] * u + bgp[i, 1] * v
             vis += vis_ * np.exp(1j*rot*arcsec2pi)
 
-    # chi^2
-    chi2 = np.sum(((re-vis.real)**2.0 + (im-vis.imag)**2.0) * w)
+    # return model
     if model:
         return ruv, fth, vis
 
-    # if not np.isfinite(chi2):
-    #     return -np.inf
+    # chi^2
+    chi2 = -0.5 * np.sum(((re-vis.real)**2.0 + (im-vis.imag)**2.0) * w)
 
-    return -0.5 * chi2
+    # priors
+    prior = -0.5 * np.sum(np.square(rp[:, -1]/args.zprior))
+
+    if not np.isfinite(chi2):
+        print(f'non-finite chi2 with parameters\n{p}')
+        return -np.inf
+    if not np.isfinite(prior):
+        print(f'non-finite prior with parameters\n{p}')
+        return -np.inf
+
+    return chi2 + prior
 
 
-print(f'initial log(p) {lnprob(p0)}')
+test = lnprob(p0)
+print(f'\nInitial ln(prob) {test}\n')
+if not np.isfinite(test):
+    exit('Initial probability not finite')
+
+# attempt initial minimisation
+if args.minimize:
+    nlnprob = lambda x: -lnprob(x)
+    fit = minimize(nlnprob, p0, method='Nelder-Mead',
+                   options={'maxiter': 10000})
+    print(f"Initial minimisation: {fit['message']}")
+    p0 = fit['x']
+    print(f' minimised ln(p) {lnprob(p0)}')
 
 # set up and run mcmc fitting
 ndim = len(p0)
-nwalkers = 2*ndim
-nsteps = 1000
-nthreads = 6
+nwalkers = 4*ndim
+nsteps = args.steps
+if args.threads:
+    nthreads = args.threads
+else:
+    nthreads = os.cpu_count()
+
+print(f'Running emcee with {nwalkers} walkers on {nthreads} threads for {nsteps} steps')
 
 # we are using emcee v3
 with mp.Pool(nthreads) as pool:
@@ -237,41 +329,43 @@ with mp.Pool(nthreads) as pool:
     pos, prob, state = sampler.run_mcmc(pos, nsteps, progress=True)
 
 # see what the chains look like, skip a burn in period
-burn = nsteps - 200
+print('Plotting')
+burn = args.steps - args.keep
 fig, ax = plt.subplots(ndim+1, 2, figsize=(9.5, 5), sharex='col', sharey=False)
 
 for j in range(nwalkers):
     ax[-1, 0].plot(sampler.lnprobability[j, :burn])
+    ax[-1, 0].set_ylabel('ln(prob)', rotation=0, va='center')
     for i in range(ndim):
         ax[i, 0].plot(sampler.chain[j, :burn, i])
-        ax[i, 0].set_ylabel(params[i])
+        ax[i, 0].set_ylabel(params[i], rotation=0, va='center')
 
 for j in range(nwalkers):
     ax[-1, 1].plot(sampler.lnprobability[j, burn:])
     for i in range(ndim):
         ax[i, 1].plot(sampler.chain[j, burn:, i])
-        # ax[i, 1].set_ylabel(params[i])
 
 ax[-1, 0].set_xlabel('burn in')
 ax[-1, 1].set_xlabel('sampling')
-fig.savefig('example-chains.png')
+fig.subplots_adjust(hspace=0.1)
+fig.align_ylabels(ax[:, 0])
+fig.savefig(f'{outdir}/chains.png', dpi=150)
 
-p = np.median(sampler.chain[:, burn:, :].reshape((-1, ndim)), axis=0)
-ruv, fth, vis = lnprob(p, model=True)
-fig, ax = plt.subplots()
-ax.scatter(ruv/1e6, re, s=0.1)
-ax.scatter(ruv/1e6, vis.real, s=0.1, color='yellow')
-ax.set_xlabel('baseline / M$\\lambda$')
-ax.set_ylabel('flux / Jy')
-fig.tight_layout()
-fig.savefig('example-vis.png')
+# make a corner plot
+fig = corner.corner(sampler.chain[:, burn:, :].reshape((-1, ndim)),
+                    labels=params, show_titles=True)
+fig.savefig(f'{outdir}/corner.pdf')
+
+# save chains
+np.save(f'{outdir}/chains.npy', sampler.chain)
 
 # save model visibilities
-if args.save:
-    for f in visfiles:
-        print(f'saving model for {os.path.basename(f)}')
-        u, v, re, im, w = functions.read_vis(f)
-        _, _, vis = lnprob(p, model=True)
-        f_ = os.path.splitext(os.path.basename(f))
-        f_save = f_[0] + '-vismod' + f_[1]
-        np.save(f"{outdir}/{f_save}", vis)
+print('Saving')
+p = np.median(sampler.chain[:, burn:, :].reshape((-1, ndim)), axis=0)
+for f in args.visfiles:
+    print(f' model for {os.path.basename(f)}')
+    u, v, re, im, w = functions.read_vis(f)
+    _, _, vis = lnprob(p, model=True)
+    f_ = os.path.splitext(os.path.basename(f))
+    f_save = f_[0] + '-vismod' + f_[1]
+    np.save(f'{outdir}/{f_save}', vis)

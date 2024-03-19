@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.stats import binned_statistic_2d
+from scipy.special import erf, erfc
 
 
 def read_vis(f):
@@ -55,7 +56,7 @@ def get_duv(r=0.99, size_arcsec=None):
     return 1/(size_arcsec/3600*np.pi/180) * np.sqrt(1/r**2 - 1)
 
 
-def bin_uv(u_, v_, re_, im_, w_, size_arcsec=None):
+def bin_uv(u_, v_, re_, im_, w_, size_arcsec=None, verb=True):
     """Return binned visibilities.
 
     Parameters
@@ -76,7 +77,8 @@ def bin_uv(u_, v_, re_, im_, w_, size_arcsec=None):
     im_[uneg] *= -1
 
     binsz = get_duv(size_arcsec=size_arcsec)
-    print(f'uv bin: {binsz:.2f}')
+    if verb:
+        print(f'u,v bin: {binsz:.0f}')
 
     bins = [int(np.max(np.abs(v_))/binsz), int(np.max(np.abs(u_))/binsz)*2]
 
@@ -93,9 +95,6 @@ def bin_uv(u_, v_, re_, im_, w_, size_arcsec=None):
     re = (re[ok] / w[ok]).flatten()
     im = (im[ok] / w[ok]).flatten()
     w = w[ok].flatten()
-
-    print(f' original nvis:{len(u_)}')
-    print(f' binned nvis:{len(u)}')
 
     return u, v, re, im, w
 
@@ -125,7 +124,38 @@ def uv_trans(u, v, PA, inc, return_uv=False):
 
 
 def r_prof_gauss(r, par):
+    """Gaussian, par: r0, sigma_r"""
     return np.exp(-0.5*np.square((r - par[0])/par[1]))
 
+
 def r_prof_power(r, par):
+    """Double power-law, par: r0, a_i, a_o, gamma"""
     return 1/((r/par[0])**(-par[3]*par[1]) + (r/par[0])**(-par[3]*par[2]))**(1/par[3])
+
+
+def r_prof_erf_power(r, par):
+    """Inner erf and outer power, par: r0, sigma_i, a_o"""
+    return erf_in(r, par[0], par[1]) * (r/par[0])**(par[2])
+
+
+def r_prof_erf2_power(r, par):
+    """Inner and outer erf with power, par: r_i, a, sigma_i, r_o, sigma_o"""
+    return erf_in(r, par[0], par[2]) * erf_out(r, par[3], par[4]) * (r/par[0])**par[1]
+
+
+def r_prof_gauss2(r, par):
+    """Gaussian, par: r0, sigma_i, sigma_o"""
+    sb = r_prof_gauss(r, [par[0], par[1]])
+    ok = r > par[0]
+    sb[ok] = r_prof_gauss(r[ok], [par[0], par[2]])
+    return sb
+
+
+def erf_in(r, r0, sigi):
+    """Scaled error function, inner edge."""
+    return 0.5 * erfc((r0-r)/(np.sqrt(2)*sigi*r0))
+
+
+def erf_out(r, r0, sigo):
+    """Scaled error function, outer edge."""
+    return 0.5 * erfc((r-r0)/(np.sqrt(2)*sigo*r0))
