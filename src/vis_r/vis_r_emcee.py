@@ -45,6 +45,8 @@ parser.add_argument('-g', dest='g', type=float, nargs=4, required=True,
 parser.add_argument('-p', dest='p', type=float, action='append', required=True, nargs='+',
                     metavar='norm r ... zh',
                     help='Radial component model parameters')
+parser.add_argument('--out-rel', dest='outrel',  type=str, default='../models',
+                    help='Path to output relative to first data file')
 parser.add_argument('-o', dest='outdir',  type=str, default=None,
                     help='Folder for output')
 parser.add_argument('--sz', dest='sz', metavar='8.84', type=float, default=8.84,
@@ -78,6 +80,9 @@ args = parser.parse_args()
 
 # set up initial parameters, start with geometry
 inits = np.append(args.g, args.p)
+for i in [0, 1]:
+    if inits[i] == 0:
+        inits[i] = 0.001
 params = ['$\\Delta \\alpha$', '$\\Delta \\delta$', '$\\phi$', '$i$']
 
 # pick a radial profile
@@ -121,7 +126,7 @@ if args.bg:
     nbg = len(args.bg)
     i += 6*nbg
     inits = np.append(inits, args.bg)
-    params_ = ['$x_{bg}$', '$y_{bg}$', '$F_{bg}$', '$r_{bg}$', '$\\phi_{bg}$', '$i_{bg}$']
+    params_ = ['$\\alpha_{bg}$', '$\\delta_{bg}$', '$F_{bg}$', '$r_{bg}$', '$\\phi_{bg}$', '$i_{bg}$']
     if nbg > 1:
         for i in range(nbg):
             for p in params_:
@@ -134,7 +139,7 @@ if args.pt:
     npt = len(args.pt)
     i += 3*npt
     inits = np.append(inits, args.pt)
-    params_ = ['$x_{pt}$', '$y_{pt}$', '$F_{pt}$']
+    params_ = ['$\\alpha_{pt}$', '$\\delta_{pt}$', '$F_{pt}$']
     if npt > 1:
         for i in range(npt):
             for p in params_:
@@ -142,17 +147,53 @@ if args.pt:
     else:
         params += params_
 
+n_param = len(params)
+
+params_text = []
+for p in params:
+    p = p.split('[')[0]
+    p = p.replace('Delta ', 'd_')
+    p = p.replace('\\', '')
+    p = p.replace('{', '')
+    p = p.replace('}', '')
+    p = p.replace('$', '')
+    params_text.append(p)
+
+# set up priors, limits for now
+all_limits = {'F': [0, np.inf],
+              'r': [0, np.inf],
+              'phi': [-180, 180],
+              'i': [0, 90],
+              'a_in': [0, 50],
+              'a_out': [-50, 0],
+              'gamma': [0, 20],
+              'sigma_r': [0, np.inf],
+              'sigma_z': [0, 0.2]
+              }
+
+all_limits['r_in'] = all_limits['r_out'] = all_limits['r']
+all_limits['F_star'] = all_limits['F_bg'] = all_limits['F_pt'] = all_limits['F']
+all_limits['sigma_in'] = all_limits['sigma_out'] = all_limits['sigma_r']
+
+limits = np.zeros((n_param, 2))
+for i, p in enumerate(params_text):
+    if p in all_limits.keys():
+        limits[i, :] = all_limits[p]
+    else:
+        limits[i, :] = [-np.inf, np.inf]
+
 p0 = inits
-print('\nFitting parameters')
-print('------------------')
-pprint((range(len(p0)), params, p0))
+print('\nFitting parameters (name, initial value, lo/hi limits)')
+print(  '------------------------------------------------------')
+pprint((range(len(p0)), params, p0, limits[:, 0], limits[:, 1]))
 print('')
 
 # set up output directory
 if args.outdir:
     outdir = args.outdir.rstrip()
 else:
-    outdir = f'vis-r_{args.type}'
+    relpath = os.path.dirname(args.visfiles[0])
+    outdir = f'{relpath}/{args.outrel}/vis-r_{nr}{args.type}'
     if args.star:
         outdir += '_star'
     if args.bg:
@@ -195,12 +236,17 @@ arcsec2pi = arcsec*2*np.pi
 uvmax = np.max(np.sqrt(u**2 + v**2))
 uvmin = np.min(np.sqrt(u**2 + v**2))
 
-fac = 1.5  # safety factor
 if args.rmax:
     r_max = args.rmax
 else:
-    r_max = jn_zeros(0, 1)[0] / (2*np.pi*uvmin*np.cos(np.deg2rad(p0[3]))) / arcsec * fac
+    # r_max = jn_zeros(0, 1)[0] / (2*np.pi*uvmin*np.cos(np.deg2rad(p0[3]))) / arcsec
+    r_max = jn_zeros(0, 1)[0] / (2*np.pi*uvmin) / arcsec
 
+# set based on probable primary beam HWHM
+if r_max < 10:
+    r_max = 10
+
+# this is lazy, should do bisection
 nhpt = 1
 while True:
     q_tmp = jn_zeros(0, nhpt)[-1]
@@ -211,7 +257,7 @@ while True:
 h = frank.hankel.DiscreteHankelTransform(r_max*arcsec, nhpt)
 Rnk, Qnk = h.get_collocation_points(r_max*arcsec, nhpt)
 
-print(f'\nR_out: {r_max}, N: {nhpt}')
+print(f'\nR_out: {r_max:.1f}, N: {nhpt}')
 pprint(([' min/max q_k: ', ' min/max u,v:'],
         [f'{Qnk[0]:.0f}', f'{uvmin:.0f}'],
         [f'{Qnk[-1]:.0f}', f'{uvmax:.0f}']))
@@ -219,8 +265,7 @@ pprint(([' min/max q_k: ', ' min/max u,v:'],
 
 def lnprob(p, model=False):
 
-    # geometry bounds, may need to revisit inclination upper limit
-    if p[2] < -360 or p[2] > 360 or p[3] < 0 or p[3] > 90:
+    if np.any(p < limits[:, 0]) or np.any(p > limits[:, 1]):
         return -np.inf
 
     # u,v rotation
@@ -230,8 +275,6 @@ def lnprob(p, model=False):
     # radial profile, loop over components
     # (should do matrices as in stan implementation)
     rp = p[4:4+nrp*nr].reshape((nr, -1))
-    if np.min(rp[:, 2]) < 0 or np.min(rp[:, -1]) < 0:
-        return -np.inf
     rz_part = np.sin(np.deg2rad(p[3])) * urot * arcsec2pi
     for i in range(nr):
         f = 1/2.35e-11*r_prof(Rnk/arcsec, rp[i, 1:])
@@ -239,10 +282,11 @@ def lnprob(p, model=False):
         # normalise on shortest baseline
         fth = fth * rp[i, 0] / fth[0]
 
-        # interpolate, frank has a method for this too
-        # but it is about 10x slower
-        # vis = h.interpolate(fth, ruv, space='Fourier')
+        # interpolate, interp sets values for ruv<Qnk[0] to Qnk[0]
+        # which is the desired behaviour
         vis_ = np.interp(ruv, Qnk, fth)
+        # frank has a method for this too but it is about 10x slower
+        # vis = h.interpolate(fth, ruv, space='Fourier')
 
         # vertical structure
         rz = rp[i, -1] * rp[i, 1] * rz_part
@@ -250,8 +294,6 @@ def lnprob(p, model=False):
 
     # star (before shift, i.e. assuming disk is star-centered)
     if args.star:
-        if p[istar] < 0:
-            return -np.inf
         vis += p[istar]
 
     # phase shift
@@ -261,16 +303,12 @@ def lnprob(p, model=False):
     # point background source, all at once
     if args.pt:
         ptp = p[ipt:ipt+npt*3].reshape((npt, -1))
-        if np.min(ptp[:, 2]) < 0:
-            return -np.inf
         rot = ptp[:, 0][:, np.newaxis] * u + ptp[:, 1][:, np.newaxis] * v  # [npt x nvis]
         vis += np.inner(ptp[:, 2][:, np.newaxis].T, np.exp(1j*rot*arcsec2pi).T).squeeze()  # sum over npt
 
     # resolved background source, one at a time
     if args.bg:
         bgp = p[ibg:ibg+nbg*6].reshape((nbg, -1))
-        if np.min(bgp[:, 2:]) < 0 or np.max(bgp[:, 4:]) > 180:
-            return -np.inf
         for i in range(nbg):
             urot, ruv = functions.uv_trans(u, v, np.deg2rad(bgp[i, 4]), np.deg2rad(bgp[i, 5]))
             vis_ = bgp[i, 2] * np.exp(-0.5*np.square(bgp[i, 3])*ruv*arcsec2pi)
@@ -284,17 +322,14 @@ def lnprob(p, model=False):
     # chi^2
     chi2 = -0.5 * np.sum(((re-vis.real)**2.0 + (im-vis.imag)**2.0) * w)
 
-    # priors
-    prior = -0.5 * np.sum(np.square(rp[:, -1]/args.zprior))
+    # priors (using limits above instead)
+    # chi2 += -0.5 * np.sum(np.square(rp[:, -1]/args.zprior))
 
     if not np.isfinite(chi2):
         print(f'non-finite chi2 with parameters\n{p}')
         return -np.inf
-    if not np.isfinite(prior):
-        print(f'non-finite prior with parameters\n{p}')
-        return -np.inf
 
-    return chi2 + prior
+    return chi2
 
 
 test = lnprob(p0)
@@ -359,9 +394,12 @@ fig.savefig(f'{outdir}/corner.pdf')
 # save chains
 np.save(f'{outdir}/chains.npy', sampler.chain)
 
-# save model visibilities
+# save model and visibilities
 print('Saving')
 p = np.median(sampler.chain[:, burn:, :].reshape((-1, ndim)), axis=0)
+p25 = np.percentile(sampler.chain[:, burn:, :].reshape((-1, ndim)), 2.5, axis=0)
+p97 = np.percentile(sampler.chain[:, burn:, :].reshape((-1, ndim)), 97.5, axis=0)
+np.save(f'{outdir}/best_params.npy', np.vstack((params, p, p25, p97)))
 for f in args.visfiles:
     print(f' model for {os.path.basename(f)}')
     u, v, re, im, w = functions.read_vis(f)

@@ -11,31 +11,13 @@ import matplotlib.pyplot as plt
 import arviz as az
 import corner
 
-from . import stan_gauss_code
+from . import vis_r_gauss_code
 
-'''
-Create M2 (arm-64) conda env with
 
->CONDA_SUBDIR=osx-arm64 conda create -n stan python=3.11 ipython numpy scipy matplotlib
->conda activate stan
->conda env config vars set CONDA_SUBDIR=osx-arm64
->conda deactivate
->conda activate stan
->conda install -c conda-forge cmdstanpy corner cmdstan>=2.33.1
-
-Get alma package from github and install with pip
-
->cd alma
->pip install .
-
-This runs ~3x faster than Intel Mac, and >10x faster than osx-64 on an M2.
-M2 Pro is nearly 2x faster again.
-'''
-
-def alma_stan_gauss():
+def vis_r_stan_gauss():
 
     # setup
-    parser = argparse.ArgumentParser(description='almastan (gaussian)')
+    parser = argparse.ArgumentParser(description='vis-r-stan (gaussian)')
     parser.add_argument('-v', dest='visfiles', metavar=('vis1.npy', 'vis2.npy'), nargs='+', required=True,
                         help='numpy save files (u, v, re, im, w, wav, filename)')
     parser.add_argument('-g', dest='g', type=float, nargs=4,

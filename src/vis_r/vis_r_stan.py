@@ -4,7 +4,6 @@ import argparse
 import pickle
 import numpy as np
 from scipy.special import jn_zeros
-import cmdstanpy
 from cmdstanpy import CmdStanModel
 import matplotlib.pyplot as plt
 import arviz as az
@@ -14,16 +13,8 @@ import frank
 from . import functions
 from . import vis_r_stan_code
 
-# try for cmdstan installed with cmdstanpy.install_cmdstan()
-# temporary fix until higher versions available in conda
-# otherwise call with --no-pf
-try:
-    cmdstanpy.set_cmdstan_path(os.path.expanduser('~') + '.cmdstan/cmdstan-2.33.1/')
-except:
-    pass
-
-'''
-Create M2 (arm-64) conda env with
+"""
+Create M2 (arm-64) conda env with:
 
 >CONDA_SUBDIR=osx-arm64 conda create -n stan python=3.11 ipython numpy scipy matplotlib
 >conda activate stan
@@ -31,16 +22,25 @@ Create M2 (arm-64) conda env with
 >conda deactivate
 >conda activate stan
 >conda install -c conda-forge cmdstanpy corner arviz
->pip install frank
+>pip install https://github.com/drgmk/vis-r/archive/refs/heads/main.zip
 
-Get alma package from github and install with pip
-
->cd alma
->pip install .
-
-This runs ~3x faster than Intel Mac, and >10x faster than osx-64 on an M2.
-M2 Pro is nearly 2x faster again.
-'''
+To update stan to the latest version, which will likely be
+more recent than in `conda` and will allow use of pathfinder
+to find initial parameters and estimate posteriors:
+```python
+import cmdstanpy
+cmdstanpy.install_cmdstan()
+```
+Then uncomment the code below to point `cmdstanpy` to this version:
+"""
+# import cmdstanpy
+# import glob
+# try:
+#     vs = glob.glob(os.path.expanduser('~') + '/.cmdstan/*')
+#     vs.sort()
+#     cmdstanpy.set_cmdstan_path(vs[-1])
+# except:
+#     pass
 
 
 def vis_r_stan_radial():
@@ -217,7 +217,7 @@ def vis_r_stan_radial():
 
     if args.sz > 0:
         data['u'], data['v'], data['re'],  data['im'], data['w'] = \
-            functions.bin_uv(u_, v_, re_, im_, w, size_arcsec=args.sz)
+            functions.bin_uv(u_, v_, re_, im_, w_, size_arcsec=args.sz)
     else:
         data['u'] = u_
         data['v'] = v_
@@ -235,7 +235,8 @@ def vis_r_stan_radial():
     uvmin = np.min(np.sqrt(data['u']**2 + data['v']**2))
     # estimate lowest frequency given inclination, and include a safety factor
     fac = 1.5  # safety factor
-    r_max = jn_zeros(0, 1)[0] / (2*np.pi*uvmin*np.cos(inits['inc']/mul['inc'])) / arcsec * fac
+    # r_max = jn_zeros(0, 1)[0] / (2*np.pi*uvmin*np.cos(inits['inc']/mul['inc'])) / arcsec * fac
+    r_max = jn_zeros(0, 1)[0] / (2*np.pi*uvmin) / arcsec * fac
 
     nhpt = 1
     while True:
