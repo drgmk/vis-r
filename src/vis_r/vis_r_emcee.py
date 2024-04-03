@@ -171,9 +171,11 @@ all_limits = {'F': [0, np.inf],
               'sigma_z': [0, 0.2]
               }
 
-all_limits['r_in'] = all_limits['r_out'] = all_limits['r']
+all_limits['r_in'] = all_limits['r_out'] = all_limits['r_bg'] = all_limits['r']
 all_limits['F_star'] = all_limits['F_bg'] = all_limits['F_pt'] = all_limits['F']
 all_limits['sigma_in'] = all_limits['sigma_out'] = all_limits['sigma_r']
+all_limits['phi_bg'] = all_limits['phi']
+all_limits['i_bg'] = all_limits['i']
 
 limits = np.zeros((n_param, 2))
 for i, p in enumerate(params_text):
