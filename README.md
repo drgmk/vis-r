@@ -10,4 +10,4 @@ conda activate vis-r
 pip install https://github.com/drgmk/vis-r/archive/refs/heads/main.zip
 ```
 
-To install the `stan` version `vis-r-stan`, the install is similar and listed at the top of `vis_r_stan.py`
+To install and env for the `stan` version `vis-r-stan`, the install is similar and listed at the top of `vis_r_stan.py`

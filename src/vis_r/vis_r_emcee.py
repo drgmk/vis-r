@@ -59,20 +59,22 @@ parser.add_argument('--pt', dest='pt', metavar=('dra', 'ddec', 'f'), action='app
                     type=float, nargs=3, help='Unresolved background sources')
 parser.add_argument('--rmax', dest='rmax', metavar='rmax', type=float, default=None,
                     help='Rmax for Hankel transform')
-# parser.add_argument('--inc-lim', dest='inc_lim', action='store_true', default=False,
-#                     help="Limit range of inclinations")
-# parser.add_argument('--pa-lim', dest='pa_lim', action='store_true', default=False,
-#                     help="limit range of position angles")
 parser.add_argument('--z-prior', dest='zprior', metavar='0.2', type=float, default=0.2,
                     help='1sigma upper limit on z/r')
+parser.add_argument('--test', dest='test', action='store_true', default=False,
+                    help="Plot initial model")
 parser.add_argument('--rew', dest='reweight', action='store_true', default=False,
                     help="Reweight visibilities")
 parser.add_argument('--min', dest='minimize', action='store_true', default=False,
                     help="Attempt initial minimisation")
+parser.add_argument('--walker-factor', dest='walk', metavar='4', type=int, default=4,
+                    help='walkers = factor * parameters for emcee')
 parser.add_argument('--steps', dest='steps', metavar='1400', type=int, default=1400,
                     help='Number of total steps for emcee')
 parser.add_argument('--keep', dest='keep', metavar='400', type=int, default=400,
                     help='Number of steps to keep for emcee')
+parser.add_argument('--restore', dest='restore', action='store_true', default=False,
+                    help="Restore walkers from prior run")
 parser.add_argument('--threads', dest='threads', metavar='Ncpu', type=int, default=None,
                     help='Number of threads for emcee')
 
@@ -168,7 +170,7 @@ all_limits = {'F': [0, np.inf],
               'a_out': [-50, 0],
               'gamma': [0, 20],
               'sigma_r': [0, np.inf],
-              'sigma_z': [0, 0.2]
+              'sigma_z': [0, args.zprior]
               }
 
 all_limits['r_in'] = all_limits['r_out'] = all_limits['r_bg'] = all_limits['r']
@@ -185,10 +187,7 @@ for i, p in enumerate(params_text):
         limits[i, :] = [-np.inf, np.inf]
 
 p0 = inits
-print('\nFitting parameters (name, initial value, lo/hi limits)')
-print(  '------------------------------------------------------')
-pprint((range(len(p0)), params, p0, limits[:, 0], limits[:, 1]))
-print('')
+ndim = len(p0)
 
 # set up output directory
 if args.outdir:
@@ -272,7 +271,10 @@ def lnprob(p, model=False):
 
     # u,v rotation
     urot, ruv = functions.uv_trans(u, v, np.deg2rad(p[2]), np.deg2rad(p[3]))
+
+    # radial arrays, sb is not really sb
     vis = np.zeros(len(ruv))
+    sb = np.zeros(len(Rnk))
 
     # radial profile, loop over components
     # (should do matrices as in stan implementation)
@@ -283,12 +285,13 @@ def lnprob(p, model=False):
         fth = h.transform(f)
         # normalise on shortest baseline
         fth = fth * rp[i, 0] / fth[0]
+        sb += rp[i, 0] * f
 
         # interpolate, interp sets values for ruv<Qnk[0] to Qnk[0]
         # which is the desired behaviour
         vis_ = np.interp(ruv, Qnk, fth)
         # frank has a method for this too but it is about 10x slower
-        # vis = h.interpolate(fth, ruv, space='Fourier')
+        # vis_ = h.interpolate(fth, ruv, space='Fourier')
 
         # vertical structure
         rz = rp[i, -1] * rp[i, 1] * rz_part
@@ -319,7 +322,7 @@ def lnprob(p, model=False):
 
     # return model
     if model:
-        return ruv, fth, vis
+        return rot, ruv, vis, sb
 
     # chi^2
     chi2 = -0.5 * np.sum(((re-vis.real)**2.0 + (im-vis.imag)**2.0) * w)
@@ -333,6 +336,25 @@ def lnprob(p, model=False):
 
     return chi2
 
+
+# mcmc setup
+nwalkers = args.walk*ndim
+savefile = f'{outdir}/vismod.h5'
+backend = emcee.backends.HDFBackend(savefile)
+
+if os.path.exists(savefile) and args.restore:
+    print(f'Ignoring input param values, restoring from previous run')
+    p0 = np.median(backend.get_chain(flat=True), axis=0)
+    pos = backend.get_last_sample().coords
+    # pos = np.load(f'{outdir}/chains.npy')[:, -1, :]
+else:
+    pos = [p0 + p0*0.01*np.random.randn(ndim) for i in range(nwalkers)]
+    backend.reset(nwalkers, ndim)
+
+print('\nFitting parameters (name, initial value, lo/hi limits)')
+print(  '------------------------------------------------------')
+pprint((range(len(p0)), params, p0, limits[:, 0], limits[:, 1]))
+print('')
 
 test = lnprob(p0)
 print(f'\nInitial ln(prob) {test}\n')
@@ -348,9 +370,25 @@ if args.minimize:
     p0 = fit['x']
     print(f' minimised ln(p) {lnprob(p0)}')
 
-# set up and run mcmc fitting
-ndim = len(p0)
-nwalkers = 4*ndim
+# plot the initial model
+if args.test:
+    rot, ruv, vis, sb = lnprob(p0, model=True)
+    srt = np.argsort(ruv)
+    vis *= np.exp(-1j*rot)
+    ruv_bin, vis_bin = functions.bin_ruv(ruv, re+1j*im, bins=nhpt)
+
+    # visibilities
+    # plt.scatter(ruv, re, s=0.2, label='data', alpha=0.5)
+    plt.scatter(ruv_bin, vis_bin.real, s=1, label='binned', alpha=0.5)
+    plt.semilogx(ruv[srt], vis.real[srt], 'r', label='model')
+    plt.xlabel('baseline / $\\lambda$')
+    plt.ylabel('real(visibility) / Jy')
+
+    plt.legend()
+    plt.show()
+    exit()
+
+# run mcmc fitting
 nsteps = args.steps
 if args.threads:
     nthreads = args.threads
@@ -361,14 +399,13 @@ print(f'Running emcee with {nwalkers} walkers on {nthreads} threads for {nsteps}
 
 # we are using emcee v3
 with mp.Pool(nthreads) as pool:
-    sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, pool=pool)
-    pos = [p0 + p0*0.01*np.random.randn(ndim) for i in range(nwalkers)]
+    sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, pool=pool, backend=backend)
     pos, prob, state = sampler.run_mcmc(pos, nsteps, progress=True)
 
 # see what the chains look like, skip a burn in period
 print('Plotting')
-burn = args.steps - args.keep
-fig, ax = plt.subplots(ndim+1, 2, figsize=(9.5, 5), sharex='col', sharey=False)
+burn = backend.iteration - args.keep
+fig, ax = plt.subplots(ndim+1, 2, figsize=(10, int(0.75*ndim)), sharex='col', sharey=False)
 
 for j in range(nwalkers):
     ax[-1, 0].plot(sampler.lnprobability[j, :burn])
@@ -384,14 +421,9 @@ for j in range(nwalkers):
 
 ax[-1, 0].set_xlabel('burn in')
 ax[-1, 1].set_xlabel('sampling')
-fig.subplots_adjust(hspace=0.1)
+fig.subplots_adjust(hspace=0.1, top=0.99, right=0.98, bottom=0.05)
 fig.align_ylabels(ax[:, 0])
 fig.savefig(f'{outdir}/chains.png', dpi=150)
-
-# make a corner plot
-fig = corner.corner(sampler.chain[:, burn:, :].reshape((-1, ndim)),
-                    labels=params, show_titles=True)
-fig.savefig(f'{outdir}/corner.pdf')
 
 # save chains
 np.save(f'{outdir}/chains.npy', sampler.chain)
@@ -405,7 +437,12 @@ np.save(f'{outdir}/best_params.npy', np.vstack((params, p, p25, p97)))
 for f in args.visfiles:
     print(f' model for {os.path.basename(f)}')
     u, v, re, im, w = functions.read_vis(f)
-    _, _, vis = lnprob(p, model=True)
+    _, _, vis, _ = lnprob(p, model=True)
     f_ = os.path.splitext(os.path.basename(f))
     f_save = f_[0] + '-vismod' + f_[1]
     np.save(f'{outdir}/{f_save}', vis)
+
+# make a corner plot (may run out of memory for many parameters so do last)
+fig = corner.corner(sampler.chain[:, burn:, :].reshape((-1, ndim)),
+                    labels=params, show_titles=True)
+fig.savefig(f'{outdir}/corner.pdf')

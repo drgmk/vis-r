@@ -1,6 +1,6 @@
 import numpy as np
-from scipy.stats import binned_statistic_2d
-from scipy.special import erf, erfc
+from scipy.stats import binned_statistic, binned_statistic_2d
+from scipy.special import erfc
 
 
 def read_vis(f):
@@ -97,6 +97,12 @@ def bin_uv(u_, v_, re_, im_, w_, size_arcsec=None, verb=True):
     w = w[ok].flatten()
 
     return u, v, re, im, w
+
+
+def bin_ruv(ruv, vis, bins=100):
+    v, edges, _ = binned_statistic(ruv, vis, statistic='mean', bins=bins)
+    ok = np.isfinite(v)
+    return ((edges[:-1] + edges[1:])/2)[ok], v[ok]
 
 
 def uv_trans(u, v, PA, inc, return_uv=False):
