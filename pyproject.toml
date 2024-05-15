@@ -3,7 +3,7 @@ name = "vis-r"
 version = "0.0.1"
 dependencies = [
     "numpy", "scipy", "matplotlib", "arviz", "corner",
-    "frank", "cmdstanpy", "emcee", "multiprocess"
+    "frank", "emcee", "multiprocess", "tqdm"
 ]
 
 [project.scripts]
