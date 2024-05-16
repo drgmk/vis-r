@@ -343,7 +343,7 @@ savefile = f'{outdir}/vismod.h5'
 backend = emcee.backends.HDFBackend(savefile)
 
 if os.path.exists(savefile) and args.restore:
-    print(f'Ignoring input param values, restoring from previous run')
+    print(f'\nIgnoring input param values, restoring from previous run')
     p0 = np.median(backend.get_chain(flat=True), axis=0)
     pos = backend.get_last_sample().coords
     # pos = np.load(f'{outdir}/chains.npy')[:, -1, :]
@@ -403,21 +403,28 @@ with mp.Pool(nthreads) as pool:
     pos, prob, state = sampler.run_mcmc(pos, nsteps, progress=True)
 
 # see what the chains look like, skip a burn in period
-print('Plotting')
+print('Plotting chains')
 burn = backend.iteration - args.keep
 fig, ax = plt.subplots(ndim+1, 2, figsize=(10, int(0.75*ndim)), sharex='col', sharey=False)
 
+# get data (from h5 save file) once, much quicker
+probdata = sampler.lnprobability
+plotdata = sampler.chain[:, :burn, :]
 for j in range(nwalkers):
-    ax[-1, 0].plot(sampler.lnprobability[j, :burn])
+    # ax[-1, 0].plot(sampler.lnprobability[j, :burn:every])
+    ax[-1, 0].plot(probdata[j, :burn])
     ax[-1, 0].set_ylabel('ln(prob)', rotation=0, va='center')
     for i in range(ndim):
-        ax[i, 0].plot(sampler.chain[j, :burn, i])
+        ax[i, 0].plot(plotdata[j, :, i])
         ax[i, 0].set_ylabel(params[i], rotation=0, va='center')
 
+# plot all post-burn, as there won't be too many
+plotdata = sampler.chain[:, burn:, :]
 for j in range(nwalkers):
-    ax[-1, 1].plot(sampler.lnprobability[j, burn:])
+    # ax[-1, 1].plot(sampler.lnprobability[j, burn:])
+    ax[-1, 1].plot(probdata[j, burn:])
     for i in range(ndim):
-        ax[i, 1].plot(sampler.chain[j, burn:, i])
+        ax[i, 1].plot(plotdata[j, :, i])
 
 ax[-1, 0].set_xlabel('burn in')
 ax[-1, 1].set_xlabel('sampling')
@@ -443,6 +450,6 @@ for f in args.visfiles:
     np.save(f'{outdir}/{f_save}', vis)
 
 # make a corner plot (may run out of memory for many parameters so do last)
-fig = corner.corner(sampler.chain[:, burn:, :].reshape((-1, ndim)),
-                    labels=params, show_titles=True)
+print('Corner plot')
+fig = corner.corner(plotdata.reshape((-1, ndim)), labels=params, show_titles=True)
 fig.savefig(f'{outdir}/corner.pdf')
