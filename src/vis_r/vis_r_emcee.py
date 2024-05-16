@@ -11,6 +11,7 @@ import argparse
 import numpy as np
 from scipy.special import jn_zeros
 from scipy.optimize import minimize
+from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
 import multiprocess as mp  # for running as script
 import frank
@@ -257,6 +258,9 @@ while True:
 
 h = frank.hankel.DiscreteHankelTransform(r_max*arcsec, nhpt)
 Rnk, Qnk = h.get_collocation_points(r_max*arcsec, nhpt)
+# extras for DIY transform with matrices (unused)
+# h_norm = 1/2.35e-11 * (2 * np.pi * (r_max*arcsec)**2) / h._j_nN
+# Ykm = h._Ykm
 
 print(f'\nR_out: {r_max:.1f}, N: {nhpt}')
 pprint(([' min/max q_k: ', ' min/max u,v:'],
@@ -272,14 +276,12 @@ def lnprob(p, model=False):
     # u,v rotation
     urot, ruv = functions.uv_trans(u, v, np.deg2rad(p[2]), np.deg2rad(p[3]))
 
-    # radial arrays, sb is not really sb
-    vis = np.zeros(len(ruv))
-    sb = np.zeros(len(Rnk))
-
-    # radial profile, loop over components
-    # (should do matrices as in stan implementation)
     rp = p[4:4+nrp*nr].reshape((nr, -1))
     rz_part = np.sin(np.deg2rad(p[3])) * urot * arcsec2pi
+
+    # radial profile, loop over components
+    vis = np.zeros(len(ruv))
+    sb = np.zeros(len(Rnk))  # sb is not really sb
     for i in range(nr):
         f = 1/2.35e-11*r_prof(Rnk/arcsec, rp[i, 1:])
         fth = h.transform(f)
@@ -288,7 +290,7 @@ def lnprob(p, model=False):
         sb += rp[i, 0] * f
 
         # interpolate, interp sets values for ruv<Qnk[0] to Qnk[0]
-        # which is the desired behaviour
+        # by default, which is the desired behaviour
         vis_ = np.interp(ruv, Qnk, fth)
         # frank has a method for this too but it is about 10x slower
         # vis_ = h.interpolate(fth, ruv, space='Fourier')
@@ -296,6 +298,20 @@ def lnprob(p, model=False):
         # vertical structure
         rz = rp[i, -1] * rp[i, 1] * rz_part
         vis += vis_ * np.exp(-0.5*np.square(rz))
+
+    # via matrices, this is actually quite a bit slower
+    # perhaps because we are already burning all CPU
+    # f = np.zeros((nhpt, nr))
+    # for i in range(nr):
+    #     f[:, i] = h_norm * r_prof(Rnk/arcsec, rp[i, 1:])
+    #
+    # fth = np.dot(Ykm, f)  # fth is N x nr
+    # fth = fth * rp[:, 0] / fth[0]
+    # sb = np.sum(rp[:, 0] * f, axis=1)
+    # interp = interp1d(Qnk, fth.T, bounds_error=False, fill_value=fth[0])
+    # vis_ = interp(ruv)  # nr x N
+    # rz = np.outer(rp[:, -1] * rp[:, 1], rz_part)  # nr x N
+    # vis = np.sum(vis_ * np.exp(-0.5*np.square(rz)), axis=0)  # N
 
     # star (before shift, i.e. assuming disk is star-centered)
     if args.star:
