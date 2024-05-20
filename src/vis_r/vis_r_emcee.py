@@ -76,10 +76,15 @@ parser.add_argument('--keep', dest='keep', metavar='400', type=int, default=400,
                     help='Number of steps to keep for emcee')
 parser.add_argument('--restore', dest='restore', action='store_true', default=False,
                     help="Restore walkers from prior run")
+parser.add_argument('--prune', dest='prune', action='store_true', default=False,
+                    help="Prune restored walkers to median")
 parser.add_argument('--threads', dest='threads', metavar='Ncpu', type=int, default=None,
                     help='Number of threads for emcee')
 
 args = parser.parse_args()
+
+if args.prune and not args.restore:
+    exit('Only set prune if restoring.')
 
 # set up initial parameters, start with geometry
 inits = np.append(args.g, args.p)
@@ -108,7 +113,9 @@ elif args.type == 'erf2_power':
 else:
     exit(f'Radial model {args.type} not known.')
 
-params_ += ['$\\sigma_z$']
+if args.zprior > 0:
+    params_ += ['$\\sigma_z$']
+
 nrp = len(params_)
 if nr > 1:
     for i in range(nr):
@@ -296,8 +303,11 @@ def lnprob(p, model=False):
         # vis_ = h.interpolate(fth, ruv, space='Fourier')
 
         # vertical structure
-        rz = rp[i, -1] * rp[i, 1] * rz_part
-        vis += vis_ * np.exp(-0.5*np.square(rz))
+        if args.zprior > 0:
+            rz = rp[i, -1] * rp[i, 1] * rz_part
+            vis += vis_ * np.exp(-0.5*np.square(rz))
+        else:
+            vis += vis_
 
     # via matrices, this is actually quite a bit slower
     # perhaps because we are already burning all CPU
@@ -360,9 +370,11 @@ backend = emcee.backends.HDFBackend(savefile)
 
 if os.path.exists(savefile) and args.restore:
     print(f'\nIgnoring input param values, restoring from previous run')
-    p0 = np.median(backend.get_chain(flat=True), axis=0)
     pos = backend.get_last_sample().coords
-    # pos = np.load(f'{outdir}/chains.npy')[:, -1, :]
+    p0 = np.median(pos, axis=0)
+    if args.prune:
+        print(' pruning parameters to median of last step + randomness')
+        pos = [p0 + p0*0.01*np.random.randn(ndim) for i in range(nwalkers)]
 else:
     pos = [p0 + p0*0.01*np.random.randn(ndim) for i in range(nwalkers)]
     backend.reset(nwalkers, ndim)
@@ -449,7 +461,7 @@ fig.align_ylabels(ax[:, 0])
 fig.savefig(f'{outdir}/chains.png', dpi=150)
 
 # save chains
-np.save(f'{outdir}/chains.npy', sampler.chain)
+# np.save(f'{outdir}/chains.npy', sampler.chain)
 
 # save model and visibilities
 print('Saving')
