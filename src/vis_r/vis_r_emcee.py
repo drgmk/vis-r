@@ -54,14 +54,16 @@ parser.add_argument('--sz', dest='sz', metavar='8.84', type=float, default=8.84,
                     help='Radius (arcsec) for uv binning')
 parser.add_argument('--star', dest='star', metavar='flux',
                     type=float, nargs=1, help='Point source at disk center')
-parser.add_argument('--bg', dest='bg', metavar=('dra', 'ddec', 'f', 'r', 'pa', 'inc'), action='append',
+parser.add_argument('--inner', dest='inner', metavar=('flux', 'sigma'),
+                    type=float, nargs=2, help='Partially resolved (Gaussian) inner source')
+parser.add_argument('--bg', dest='bg', metavar=('dra', 'ddec', 'f', 'sigma', 'pa', 'inc'), action='append',
                     type=float, nargs=6, help='Resolved background sources')
 parser.add_argument('--pt', dest='pt', metavar=('dra', 'ddec', 'f'), action='append',
                     type=float, nargs=3, help='Unresolved background sources')
 parser.add_argument('--rmax', dest='rmax', metavar='rmax', type=float, default=None,
                     help='Rmax for Hankel transform')
-parser.add_argument('--z-prior', dest='zprior', metavar='0.2', type=float, default=0.2,
-                    help='1sigma upper limit on z/r')
+parser.add_argument('--z-lim', dest='zlim', metavar='0.2', type=float, default=0.2,
+                    help='hard upper limit on z/r')
 parser.add_argument('--test', dest='test', action='store_true', default=False,
                     help="Plot initial model")
 parser.add_argument('--rew', dest='reweight', action='store_true', default=False,
@@ -88,6 +90,7 @@ if args.prune and not args.restore:
 
 # set up initial parameters, start with geometry
 inits = np.append(args.g, args.p)
+# don't allow exactly zero offset
 for i in [0, 1]:
     if inits[i] == 0:
         inits[i] = 0.001
@@ -113,7 +116,7 @@ elif args.type == 'erf2_power':
 else:
     exit(f'Radial model {args.type} not known.')
 
-if args.zprior > 0:
+if args.zlim > 0:
     params_ += ['$\\sigma_z$']
 
 nrp = len(params_)
@@ -131,12 +134,18 @@ if args.star:
     inits = np.append(inits, args.star[0])
     params += ['$F_\\star$']
 
+if args.inner:
+    iin = i
+    i += 1
+    inits = np.append(inits, args.inner)
+    params += ['$F_{in}$', '$\\sigma_{in}$']
+
 if args.bg:
     ibg = i
     nbg = len(args.bg)
     i += 6*nbg
     inits = np.append(inits, args.bg)
-    params_ = ['$\\alpha_{bg}$', '$\\delta_{bg}$', '$F_{bg}$', '$r_{bg}$', '$\\phi_{bg}$', '$i_{bg}$']
+    params_ = ['$\\alpha_{bg}$', '$\\delta_{bg}$', '$F_{bg}$', '$\\sigma_{bg}$', '$\\phi_{bg}$', '$i_{bg}$']
     if nbg > 1:
         for i in range(nbg):
             for p in params_:
@@ -171,19 +180,19 @@ for p in params:
 
 # set up priors, limits for now
 all_limits = {'F': [0, np.inf],
-              'r': [0, np.inf],
+              'r': [0.001, np.inf],
               'phi': [-180, 180],
               'i': [0, 90],
               'a_in': [0, 50],
               'a_out': [-50, 0],
               'gamma': [0, 20],
-              'sigma_r': [0, np.inf],
-              'sigma_z': [0, args.zprior]
+              'sigma_r': [0.001, np.inf],
+              'sigma_z': [0, args.zlim]
               }
 
-all_limits['r_in'] = all_limits['r_out'] = all_limits['r_bg'] = all_limits['r']
-all_limits['F_star'] = all_limits['F_bg'] = all_limits['F_pt'] = all_limits['F']
-all_limits['sigma_in'] = all_limits['sigma_out'] = all_limits['sigma_r']
+all_limits['r_in'] = all_limits['r_out'] = all_limits['r']
+all_limits['F_star'] = all_limits['F_bg'] = all_limits['F_pt'] = all_limits['F_in'] = all_limits['F']
+all_limits['sigma_in'] = all_limits['sigma_out'] = all_limits['sigma_bg'] = all_limits['sigma_r']
 all_limits['phi_bg'] = all_limits['phi']
 all_limits['i_bg'] = all_limits['i']
 
@@ -276,6 +285,19 @@ pprint(([' min/max q_k: ', ' min/max u,v:'],
 
 
 def lnprob(p, model=False):
+    '''Return ln probability of model.
+
+    Parameters
+    ----------
+    p : list
+        List of parameters
+    model : bool, optional
+        Return rot, ruv, vis, sb for plotting/testing instead of ln(prob)
+
+    Uses Hankel transform for radial profile, and analytic models for
+    other components. Equations for those can be found for example in
+    table 10.2 of 2017isra.book.....T
+    '''
 
     if np.any(p < limits[:, 0]) or np.any(p > limits[:, 1]):
         return -np.inf
@@ -303,7 +325,7 @@ def lnprob(p, model=False):
         # vis_ = h.interpolate(fth, ruv, space='Fourier')
 
         # vertical structure
-        if args.zprior > 0:
+        if args.zlim > 0:
             rz = rp[i, -1] * rp[i, 1] * rz_part
             vis += vis_ * np.exp(-0.5*np.square(rz))
         else:
@@ -322,6 +344,11 @@ def lnprob(p, model=False):
     # vis_ = interp(ruv)  # nr x N
     # rz = np.outer(rp[:, -1] * rp[:, 1], rz_part)  # nr x N
     # vis = np.sum(vis_ * np.exp(-0.5*np.square(rz)), axis=0)  # N
+
+    # partially resolved inner disk
+    if args.inner:
+        pin = p[iin:iin+2]
+        vis += pin[0] * np.exp(-0.5*np.square(pin[1]*ruv*arcsec2pi))
 
     # star (before shift, i.e. assuming disk is star-centered)
     if args.star:
@@ -342,7 +369,7 @@ def lnprob(p, model=False):
         bgp = p[ibg:ibg+nbg*6].reshape((nbg, -1))
         for i in range(nbg):
             urot, ruv = functions.uv_trans(u, v, np.deg2rad(bgp[i, 4]), np.deg2rad(bgp[i, 5]))
-            vis_ = bgp[i, 2] * np.exp(-0.5*np.square(bgp[i, 3])*ruv*arcsec2pi)
+            vis_ = bgp[i, 2] * np.exp(-0.5*np.square(bgp[i, 3]*ruv*arcsec2pi))
             rot = bgp[i, 0] * u + bgp[i, 1] * v
             vis += vis_ * np.exp(1j*rot*arcsec2pi)
 
@@ -353,8 +380,8 @@ def lnprob(p, model=False):
     # chi^2
     chi2 = -0.5 * np.sum(((re-vis.real)**2.0 + (im-vis.imag)**2.0) * w)
 
-    # priors (using limits above instead)
-    # chi2 += -0.5 * np.sum(np.square(rp[:, -1]/args.zprior))
+    # priors (unused, using hard limits above instead)
+    # chi2 += -0.5 * np.sum(np.square(rp[:, -1]/args.zlim))
 
     if not np.isfinite(chi2):
         print(f'non-finite chi2 with parameters\n{p}')
