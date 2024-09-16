@@ -271,6 +271,8 @@ if args.sz > 0:
     u, v, re, im, w = functions.bin_uv(u, v, re, im, w, size_arcsec=args.sz)
     print(f" original nvis: {nu}, fitting nvis: {len(u)}")
 
+vis_data = re + 1j*im
+
 # set up the DHT
 arcsec = np.pi/180/3600
 arcsec2pi = arcsec*2*np.pi
@@ -382,7 +384,8 @@ def lnprob(p, model=False):
 
     # phase shift
     rot = (u*p[0] + v*p[1])*arcsec2pi
-    vis = vis * np.exp(1j*rot)
+    # vis = vis * np.exp(1j*rot)
+    data = vis_data * np.exp(-1j*rot)
 
     # point background source, all at once
     if args.pt:
@@ -404,7 +407,8 @@ def lnprob(p, model=False):
         return rot, ruv, vis, sb
 
     # chi^2
-    chi2 = -0.5 * np.sum(((re-vis.real)**2.0 + (im-vis.imag)**2.0) * w)
+    # chi2 = -0.5 * np.sum(((re-vis.real)**2.0 + (im-vis.imag)**2.0) * w)
+    chi2 = -0.5 * np.sum(((data.real-vis.real)**2.0 + (data.imag-vis.imag)**2.0) * w)
 
     # priors (unused, using hard limits above instead)
     # chi2 += -0.5 * np.sum(np.square(rp[:, -1]/args.zlim))
@@ -525,6 +529,7 @@ np.save(f'{outdir}/best_params.npy', np.vstack((params, p, p25, p97)))
 for f in args.visfiles:
     print(f' model for {os.path.basename(f)}')
     u, v, re, im, w = functions.read_vis(f)
+    vis_data = re + 1j*im
     _, _, vis, _ = lnprob(p, model=True)
     f_ = os.path.splitext(os.path.basename(f))
     f_save = f_[0] + '-vismod' + f_[1]
