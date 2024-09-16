@@ -140,21 +140,37 @@ def r_prof_power(r, par):
 
 
 def r_prof_erf_power(r, par):
-    """Inner erf and outer power, par: r0, sigma_i, a_o"""
+    """Inner erf and outer power, par: r0, sigma_i, a"""
     return erf_in(r, par[0], par[1]) * (r/par[0])**(par[2])
 
 
 def r_prof_erf2_power(r, par):
     """Inner and outer erf with power, par: r_i, a, sigma_i, r_o, sigma_o"""
-    return erf_in(r, par[0], par[2]) * erf_out(r, par[3], par[4]) * (r/par[0])**par[1]
+    return erf_in(r, par[0], par[2]) * erf_out(r, par[3], par[4]) * (r/par[0])**(par[1])
 
 
 def r_prof_gauss2(r, par):
     """Gaussian, par: r0, sigma_i, sigma_o"""
-    sb = r_prof_gauss(r, [par[0], par[1]])
-    ok = r > par[0]
-    sb[ok] = r_prof_gauss(r[ok], [par[0], par[2]])
-    return sb
+    return np.piecewise(r, [r < par[0], r >= par[0]],
+                        [lambda r_: r_prof_gauss(r_, [par[0], par[1]]),
+                        lambda r_: r_prof_gauss(r_, [par[0], par[2]])])
+
+
+def r_prof_erf2_power_ggap(r, par):
+    """erf2_power with 1 Gaussian gap, par: r_i, a, sigma_i, r_o, sigma_o, d_gap, r_gap, sigma_gap"""
+    disk = r_prof_erf2_power(r, par[:5])
+    gap = r_prof_erf2_power(par[5], par[:5]) * par[6] * r_prof_gauss(r, par[6:])
+    return disk - gap
+
+
+def r_prof_erf2_power_ggap2(r, par):
+    """erf2_power with 2 Gaussian gaps, par: r_i, a, sigma_i, r_o, sigma_o,
+                                             d_gap1, r_gap1, sigma_gap1,
+                                             d_gap2, r_gap2, sigma_gap2"""
+    disk = r_prof_erf2_power(r, par[:5])
+    gap1 = r_prof_erf2_power(par[6], par[:5]) * par[5] * r_prof_gauss(r, par[6:8])
+    gap2 = r_prof_erf2_power(par[9], par[:5]) * par[8] * r_prof_gauss(r, par[9:])
+    return disk - gap1 - gap2
 
 
 def erf_in(r, r0, sigi):

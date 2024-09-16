@@ -40,6 +40,8 @@ parser.add_argument('-v', dest='visfiles', metavar=('vis1.npy', 'vis2.npy'), nar
                     help='Numpy save files (u, v, re, im, w, wav, file)')
 parser.add_argument('-t', dest='type', metavar='gauss', default='gauss',
                     help='Model type (power[6], gauss[4])')
+parser.add_argument('--surf-dens', dest='surf_dens', action='store_true', default=False,
+                    help="Include 1/sqrt(r) temp. effect")
 parser.add_argument('-g', dest='g', type=float, nargs=4, required=True,
                     metavar=('dra', 'ddec', 'pa', 'inc'),
                     help='Geometry parameters')
@@ -111,8 +113,16 @@ elif args.type == 'erf_power':
     params_ = ['$F$', '$r$', '$\\sigma_{in}$', '$a_{out}$']
     r_prof = functions.r_prof_erf_power
 elif args.type == 'erf2_power':
-    params_ = ['$F$', '$r_{in}$', '$a_{out}$', '$\\sigma_{in}$', '$r_{in}$', '$\\sigma_{out}$']
+    params_ = ['$F$', '$r_{in}$', '$a_{disk}$', '$\\sigma_{in}$', '$r_{out}$', '$\\sigma_{out}$']
     r_prof = functions.r_prof_erf2_power
+elif args.type == 'erf2_power_ggap':
+    params_ = ['$F$', '$r_{in}$', '$a_{disk}$', '$\\sigma_{in}$', '$r_{out}$', '$\\sigma_{out}$',
+               '$d_{gap}$', '$r_{gap}$', '$\\sigma_{gap}$']
+    r_prof = functions.r_prof_erf2_power_ggap
+elif args.type == 'erf2_power_ggap2':
+    params_ = ['$F$', '$r_{in}$', '$a_{disk}$', '$\\sigma_{in}$', '$r_{out}$', '$\\sigma_{out}$',
+               '$d_{gap1}$', '$r_{gap1}$', '$\\sigma_{gap1}$', '$d_{gap2}$', '$r_{gap2}$', '$\\sigma_{gap2}$']
+    r_prof = functions.r_prof_erf2_power_ggap2
 else:
     exit(f'Radial model {args.type} not known.')
 
@@ -168,6 +178,9 @@ if args.pt:
 
 n_param = len(params)
 
+if len(inits) < n_param:
+    exit('Fewer parameters given than required, did you forget z?')
+
 params_text = []
 for p in params:
     p = p.split('[')[0]
@@ -187,14 +200,23 @@ all_limits = {'F': [0, np.inf],
               'a_out': [-50, 0],
               'gamma': [0, 20],
               'sigma_r': [0.001, np.inf],
-              'sigma_z': [0, args.zlim]
+              'sigma_z': [0, args.zlim],
+              'd': [0, 1]
               }
 
+# adjust if modelling surface density
+if args.surf_dens:
+    all_limits['a_in'] = [0.5, 50]
+    all_limits['a_out'] = [-50, 0.5]
+
 all_limits['r_in'] = all_limits['r_out'] = all_limits['r']
+all_limits['r_gap'] = all_limits['r_gap1'] = all_limits['r_gap2'] = all_limits['r']
 all_limits['F_star'] = all_limits['F_bg'] = all_limits['F_pt'] = all_limits['F_in'] = all_limits['F']
 all_limits['sigma_in'] = all_limits['sigma_out'] = all_limits['sigma_bg'] = all_limits['sigma_r']
+all_limits['sigma_gap'] = all_limits['sigma_gap1'] = all_limits['sigma_gap2'] = all_limits['sigma_r']
 all_limits['phi_bg'] = all_limits['phi']
 all_limits['i_bg'] = all_limits['i']
+all_limits['d_gap'] = all_limits['d_gap1'] = all_limits['d_gap2'] = all_limits['d']
 
 limits = np.zeros((n_param, 2))
 for i, p in enumerate(params_text):
@@ -218,6 +240,8 @@ else:
         outdir += f'_{nbg}bg'
     if args.pt:
         outdir += f'_{npt}pt'
+    if args.surf_dens:
+        outdir += '_surfdens'
 
 if not os.path.exists(outdir):
     os.mkdir(outdir)
@@ -313,6 +337,8 @@ def lnprob(p, model=False):
     sb = np.zeros(len(Rnk))  # sb is not really sb
     for i in range(nr):
         f = 1/2.35e-11*r_prof(Rnk/arcsec, rp[i, 1:])
+        if args.surf_dens:
+            f /= np.sqrt(Rnk/arcsec)
         fth = h.transform(f)
         # normalise on shortest baseline
         fth = fth * rp[i, 0] / fth[0]
