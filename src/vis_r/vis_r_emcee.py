@@ -49,10 +49,11 @@ parser.add_argument('-p', dest='p', type=float, action='append', required=True, 
                     help='Radial component model parameters')
 parser.add_argument('--astrom', dest='astrom', action='store_true', default=False,
                     help="Fit offsets for each input file")
-parser.add_argument('--out-rel', dest='outrel',  type=str, default='../models',
+parser.add_argument('--out-rel', dest='outrel',  type=str, default='./',
+                    metavar='./',
                     help='Path to output relative to first data file')
 parser.add_argument('-o', dest='outdir',  type=str, default=None,
-                    help='Folder for output')
+                    help='Path to output (override --out-rel)')
 parser.add_argument('--sz', dest='sz', metavar='8.84', type=float, default=8.84,
                     help='Radius (arcsec) for uv binning')
 parser.add_argument('--star', dest='star', metavar='flux',
@@ -269,7 +270,11 @@ else:
         outdir += '_surfdens'
 
 if not os.path.exists(outdir):
-    os.mkdir(outdir)
+    try:
+        os.mkdir(outdir)
+    except FileNotFoundError:
+        print(f'Output dir could not be created, check path to\n{outdir}\nexists')
+        exit()
 
 # load data
 print(f'Loading data')

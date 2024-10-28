@@ -29,6 +29,10 @@ conda activate vis-r
 pip install https://github.com/drgmk/vis-r/archive/refs/heads/main.zip
 ```
 
+(If you are likely to fiddle with the code, it is better to clone the repo into a folder,
+cd into it, and instead install vis-r with `pip install -e .`. Calls to the installed
+`vis-r` executable will use the code in this folder.)
+
 The run the fitting on some visibilities like so
 ```shell
 vis-r -v data/HD109573.12m*npy -g 0.012 -0.035 26.6 76.5 -p 0.013 1.07 0.06 0.01
