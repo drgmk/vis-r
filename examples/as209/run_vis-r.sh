@@ -18,19 +18,3 @@ vis-r -v ~/tmp/dsharp/AS209/visibilities/AS209_continuum.8ch.npy -o as209_g18ini
 # try the MPOL solution from
 # https://github.com/MPoL-dev/examples/blob/main/AS209-pyro-inference/pyro.ipynb
 vis-r -v ~/tmp/dsharp/AS209/visibilities/AS209_continuum.8ch.npy -o as209_mpol -g 0.00182 -0.0031 85.8 33.5 --inner 0.006 0.028 -p 0.026 0.121 0.019 -p 0.04 0.230 0.099 -p 0.07 0.374 0.0417 -p 0.033 0.610 0.025 -p 0.007 0.787 0.066 -p 0.043 0.985 0.028 -p 0.033 1.095 0.11 --sz 2 --steps 1000 --walker-factor 2 --rew --z-lim 0
-
-
-## residual images
-import alma.casa
-alma.casa.residual('/Users/grant/tmp/dsharp/AS209/visibilities/AS209_continuum.split.8ch.ms/',
-	vis_model='as209_flat/AS209_continuum.8ch-vismod.npy',ms_new='as209_flat/residuals/residuals.ms')
-
-from casatasks import tclean, exportfits
-tclean(vis='as209_flat/residuals/residuals.ms/',
-	imagename='as209_flat/residuals/residuals',
-	cell='0.05arcsec', imsize=[1024,1024],
-	interactive=False, niter=0,
-	robust=1, weighting='briggs')
-
-exportfits(imagename='as209_flat/residuals/residuals.image/',
-	fitsimage='as209_flat/residuals/residuals.fits')

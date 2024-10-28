@@ -24,7 +24,7 @@ def test_fit():
 
         assert(np.allclose(real_par[1].astype(float),
                            model_par[1].astype(float),
-                           rtol=1e-2, atol=1e-2))
+                           rtol=1e-02, atol=1e-2))
 
         shutil.rmtree('tmp')
 

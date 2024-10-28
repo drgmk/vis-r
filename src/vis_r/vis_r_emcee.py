@@ -196,8 +196,8 @@ all_limits = {'F': [0, np.inf],
               'r': [0.001, np.inf],
               'phi': [-180, 180],
               'i': [0, 90],
-              'a_in': [0, 50],
-              'a_out': [-50, 0],
+              'a_in': [0, 30],
+              'a_out': [-30, 0],
               'gamma': [0, 20],
               'sigma_r': [0.001, np.inf],
               'sigma_z': [0, args.zlim],
@@ -271,8 +271,6 @@ if args.sz > 0:
     u, v, re, im, w = functions.bin_uv(u, v, re, im, w, size_arcsec=args.sz)
     print(f" original nvis: {nu}, fitting nvis: {len(u)}")
 
-vis_data = re + 1j*im
-
 # set up the DHT
 arcsec = np.pi/180/3600
 arcsec2pi = arcsec*2*np.pi
@@ -298,11 +296,11 @@ while True:
         break
     nhpt += 1
 
+# set up transform, adding zero baseline to list of Qnk
+# and pre-computing new matrix for transform
 h = frank.hankel.DiscreteHankelTransform(r_max*arcsec, nhpt)
 Rnk, Qnk = h.get_collocation_points(r_max*arcsec, nhpt)
-# extras for DIY transform with matrices (unused)
-# h_norm = 1/2.35e-11 * (2 * np.pi * (r_max*arcsec)**2) / h._j_nN
-# Ykm = h._Ykm
+Qzero = np.append(0, Qnk)
 
 print(f'\nR_out: {r_max:.1f}, N: {nhpt}')
 pprint(([' min/max q_k: ', ' min/max u,v:'],
@@ -341,16 +339,13 @@ def lnprob(p, model=False):
         f = 1/2.35e-11*r_prof(Rnk/arcsec, rp[i, 1:])
         if args.surf_dens:
             f /= np.sqrt(Rnk/arcsec)
-        fth = h.transform(f)
-        # normalise on shortest baseline
+        fth = h.transform(f, q=Qzero)  # or fth = np.dot(Ykm, f)
+        # normalise on shortest (zero) baseline
         fth = fth * rp[i, 0] / fth[0]
         sb += rp[i, 0] * f
 
-        # interpolate, interp sets values for ruv<Qnk[0] to Qnk[0]
-        # by default, which is the desired behaviour
-        vis_ = np.interp(ruv, Qnk, fth)
-        # frank has a method for this too but it is about 10x slower
-        # vis_ = h.interpolate(fth, ruv, space='Fourier')
+        # interpolate
+        vis_ = np.interp(ruv, Qzero, fth)
 
         # vertical structure
         if args.zlim > 0:
@@ -363,12 +358,12 @@ def lnprob(p, model=False):
     # perhaps because we are already burning all CPU
     # f = np.zeros((nhpt, nr))
     # for i in range(nr):
-    #     f[:, i] = h_norm * r_prof(Rnk/arcsec, rp[i, 1:])
+    #     f[:, i] = r_prof(Rnk/arcsec, rp[i, 1:])
     #
     # fth = np.dot(Ykm, f)  # fth is N x nr
     # fth = fth * rp[:, 0] / fth[0]
     # sb = np.sum(rp[:, 0] * f, axis=1)
-    # interp = interp1d(Qnk, fth.T, bounds_error=False, fill_value=fth[0])
+    # interp = interp1d(Qzero, fth.T, bounds_error=False, fill_value=fth[0])
     # vis_ = interp(ruv)  # nr x N
     # rz = np.outer(rp[:, -1] * rp[:, 1], rz_part)  # nr x N
     # vis = np.sum(vis_ * np.exp(-0.5*np.square(rz)), axis=0)  # N
@@ -384,8 +379,7 @@ def lnprob(p, model=False):
 
     # phase shift
     rot = (u*p[0] + v*p[1])*arcsec2pi
-    # vis = vis * np.exp(1j*rot)
-    data = vis_data * np.exp(-1j*rot)
+    vis = vis * np.exp(1j*rot)
 
     # point background source, all at once
     if args.pt:
@@ -407,8 +401,7 @@ def lnprob(p, model=False):
         return rot, ruv, vis, sb
 
     # chi^2
-    # chi2 = -0.5 * np.sum(((re-vis.real)**2.0 + (im-vis.imag)**2.0) * w)
-    chi2 = -0.5 * np.sum(((data.real-vis.real)**2.0 + (data.imag-vis.imag)**2.0) * w)
+    chi2 = -0.5 * np.sum(((re-vis.real)**2.0 + (im-vis.imag)**2.0) * w)
 
     # priors (unused, using hard limits above instead)
     # chi2 += -0.5 * np.sum(np.square(rp[:, -1]/args.zlim))
@@ -496,7 +489,6 @@ fig, ax = plt.subplots(ndim+1, 2, figsize=(10, int(0.75*ndim)), sharex='col', sh
 probdata = sampler.lnprobability
 plotdata = sampler.chain[:, :burn, :]
 for j in range(nwalkers):
-    # ax[-1, 0].plot(sampler.lnprobability[j, :burn:every])
     ax[-1, 0].plot(probdata[j, :burn])
     ax[-1, 0].set_ylabel('ln(prob)', rotation=0, va='center')
     for i in range(ndim):
@@ -506,7 +498,6 @@ for j in range(nwalkers):
 # plot all post-burn, as there won't be too many
 plotdata = sampler.chain[:, burn:, :]
 for j in range(nwalkers):
-    # ax[-1, 1].plot(sampler.lnprobability[j, burn:])
     ax[-1, 1].plot(probdata[j, burn:])
     for i in range(ndim):
         ax[i, 1].plot(plotdata[j, :, i])
@@ -529,7 +520,6 @@ np.save(f'{outdir}/best_params.npy', np.vstack((params, p, p25, p97)))
 for f in args.visfiles:
     print(f' model for {os.path.basename(f)}')
     u, v, re, im, w = functions.read_vis(f)
-    vis_data = re + 1j*im
     _, _, vis, _ = lnprob(p, model=True)
     f_ = os.path.splitext(os.path.basename(f))
     f_save = f_[0] + '-vismod' + f_[1]
