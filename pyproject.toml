@@ -3,9 +3,9 @@ name = "vis-r"
 version = "0.0.1"
 dependencies = [
     "numpy", "scipy", "matplotlib", "arviz", "corner",
-    "frank", "cmdstanpy", "emcee", "multiprocess"
+    "frank", "emcee", "multiprocess", "pytest"  # "cmdstanpy",
 ]
 
 [project.scripts]
-vis-r-stan = "vis_r.vis_r_stan:vis_r_stan_radial"
 vis-r = "vis_r.vis_r_emcee_main:run_vis_r_emcee"
+#vis-r-stan = "vis_r.vis_r_stan:vis_r_stan_radial"

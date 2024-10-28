@@ -43,8 +43,7 @@ arcsec2pi = arcsec*2*np.pi
 uvmax = np.max(np.sqrt(u**2 + v**2))
 uvmin = np.min(np.sqrt(u**2 + v**2))
 
-fac = 1.5  # safety factor
-r_max = jn_zeros(0, 1)[0] / (2*np.pi*uvmin*np.cos(np.deg2rad(p0[3]))) / arcsec * fac
+r_max = 10
 
 nhpt = 1
 while True:
@@ -55,6 +54,7 @@ while True:
 
 h = frank.hankel.DiscreteHankelTransform(r_max*arcsec, nhpt)
 Rnk, Qnk = h.get_collocation_points(r_max*arcsec, nhpt)
+Qzero = np.append(0, Qnk)
 
 print(f'R_out: {r_max}, N: {nhpt}')
 print(f'min/max q_k: {Qnk[0]}, {Qnk[-1]}')
@@ -72,7 +72,7 @@ def lnprob(p, test=False):
 
     # radial profile
     f = 1/2.35e-11*r_prof(Rnk/arcsec, p)
-    fth = h.transform(f)
+    fth = h.transform(f, q=Qzero)
 
     # normalise on shortest baseline
     fth = fth * p[4]/fth[0]
@@ -80,7 +80,7 @@ def lnprob(p, test=False):
     # interpolate, frank has a method for this too
     # but it is about 10x slower
     # vis = h.interpolate(fth, ruv, space='Fourier')
-    vis = np.interp(ruv, Qnk, fth)
+    vis = np.interp(ruv, Qzero, fth)
 
     # vertical structure
     rz = p[7]*p[5]*np.sin(np.deg2rad(p[3])) * urot * arcsec2pi
@@ -112,7 +112,7 @@ with mp.Pool(nthreads) as pool:
 
 # see what the chains look like, skip a burn in period
 burn = nsteps - 200
-fig, ax = plt.subplots(ndim+1, 2, figsize=(9.5, 5), sharex='col', sharey=False)
+fig, ax = plt.subplots(ndim+1, 2, figsize=(10, int(0.75*ndim)), sharex='col', sharey=False)
 
 for j in range(nwalkers):
     ax[-1, 0].plot(sampler.lnprobability[j, :burn])
@@ -135,7 +135,7 @@ ruv, fth, vis = lnprob(p, test=True)
 fig, ax = plt.subplots()
 ax.scatter(ruv/1e6, Re, s=0.1)
 ax.scatter(ruv/1e6, vis.real, s=0.1, color='yellow')
-ax.set_xlabel('baseline / M$\lambda$')
+ax.set_xlabel('baseline / M$\\lambda$')
 ax.set_ylabel('flux / Jy')
 fig.tight_layout()
 fig.savefig('example-vis.png')

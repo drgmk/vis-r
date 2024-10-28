@@ -11,7 +11,6 @@ import argparse
 import numpy as np
 from scipy.special import jn_zeros
 from scipy.optimize import minimize
-from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
 import multiprocess as mp  # for running as script
 import frank
@@ -520,7 +519,7 @@ else:
 
 print(f'Running emcee with {nwalkers} walkers on {nthreads} threads for {nsteps} steps')
 
-# we are using emcee v3
+# do the MCMC
 with mp.Pool(nthreads) as pool:
     sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, pool=pool, backend=backend)
     pos, prob, state = sampler.run_mcmc(pos, nsteps, progress=True)
@@ -531,6 +530,7 @@ burn = backend.iteration - args.keep
 fig, ax = plt.subplots(ndim+1, 2, figsize=(10, int(0.75*ndim)), sharex='col', sharey=False)
 
 # get data (from h5 save file) once, much quicker
+# than doing it for every walker
 probdata = sampler.lnprobability
 plotdata = sampler.chain[:, :burn, :]
 for j in range(nwalkers):
@@ -553,7 +553,7 @@ fig.subplots_adjust(hspace=0.1, top=0.99, right=0.98, bottom=0.05)
 fig.align_ylabels(ax[:, 0])
 fig.savefig(f'{outdir}/chains.png', dpi=150)
 
-# save chains
+# save chains as numpy
 # np.save(f'{outdir}/chains.npy', sampler.chain)
 
 # save model and visibilities
@@ -564,6 +564,7 @@ p97 = np.percentile(sampler.chain[:, burn:, :].reshape((-1, ndim)), 97.5, axis=0
 np.save(f'{outdir}/best_params.npy', np.vstack((params, p, p25, p97)))
 
 # change some things since we will run lnprob for a single dataset
+# but it was possibly bring run for multiple earlier
 limits = np.inf * np.vstack((-1*np.ones(n_param-n_off2+2),
                              np.ones(n_param-n_off2+2))).T
 iin -= n_off2-2
