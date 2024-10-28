@@ -1,2 +1,4 @@
 .DS_Store
 .idea
+vis_r.egg-info
+__pycache__

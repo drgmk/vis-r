@@ -42,12 +42,14 @@ parser.add_argument('-t', dest='type', metavar='gauss', default='gauss',
                     help='Model type (power[6], gauss[4])')
 parser.add_argument('--surf-dens', dest='surf_dens', action='store_true', default=False,
                     help="Include 1/sqrt(r) temp. effect")
-parser.add_argument('-g', dest='g', type=float, nargs=4, required=True,
-                    metavar=('dra', 'ddec', 'pa', 'inc'),
+parser.add_argument('-g', dest='g', type=float, nargs='+', required=True,
+                    metavar='dra ddec [dra ddec ...] pa inc',
                     help='Geometry parameters')
 parser.add_argument('-p', dest='p', type=float, action='append', required=True, nargs='+',
                     metavar='norm r ... zh',
                     help='Radial component model parameters')
+parser.add_argument('--astrom', dest='astrom', action='store_true', default=False,
+                    help="Fit offsets for each input file")
 parser.add_argument('--out-rel', dest='outrel',  type=str, default='../models',
                     help='Path to output relative to first data file')
 parser.add_argument('-o', dest='outdir',  type=str, default=None,
@@ -91,14 +93,37 @@ if args.prune and not args.restore:
     exit('Only set prune if restoring.')
 
 # set up initial parameters, start with geometry
-inits = np.append(args.g, args.p)
+if args.astrom:
+    n_off = len(args.visfiles)
+    if n_off == 1:
+        print(' Turning astrom off, fitting only one file')
+        args.astrom = False
+else:
+    n_off = 1
+
+n_off2 = 2*n_off
+
+# expand if only one set of offsets given
+if len(args.g) != n_off2+2:
+    geom = np.tile(args.g[:-2], n_off)
+    geom = np.append(geom, args.g[-2:])
+else:
+    geom = args.g
+
+params = []
+for i in range(n_off):
+    params.append(f'$\\Delta \\alpha[{i}]$')
+    params.append(f'$\\Delta \\delta[{i}]$')
+
+params += ['$\\phi$', '$i$']
+
 # don't allow exactly zero offset
-for i in [0, 1]:
-    if inits[i] == 0:
-        inits[i] = 0.001
-params = ['$\\Delta \\alpha$', '$\\Delta \\delta$', '$\\phi$', '$i$']
+for i in range(n_off2):
+    if geom[i] == 0:
+        geom[i] = 0.001
 
 # pick a radial profile
+inits = np.append(geom, args.p)
 nr = len(args.p)
 if args.type == 'power':
     params_ = ['$F$', '$r$', '$a_{in}$', '$a_{out}$', '$\\gamma$']
@@ -138,6 +163,7 @@ else:
     params += params_
 
 i = len(inits)
+istar = iin = ibg = ipt = 0
 if args.star:
     istar = i
     i += 1
@@ -179,7 +205,7 @@ if args.pt:
 n_param = len(params)
 
 if len(inits) < n_param:
-    exit('Fewer parameters given than required, did you forget z?')
+    exit(f'Fewer parameters given than required, did you forget z?\n{inits}\n{params}')
 
 params_text = []
 for p in params:
@@ -249,8 +275,11 @@ if not os.path.exists(outdir):
 # load data
 print(f'Loading data')
 u = v = re = im = w = np.array([])
+n_uv = []
+sum_uv = 0
 for i, f in enumerate(args.visfiles):
     u_, v_, re_, im_, w_ = functions.read_vis(f)
+    sum_uv += len(u_)
     print(f' {f} with nvis: {len(u_)}')
 
     reweight_factor = 2 * len(w_) / np.sum((re_**2.0 + im_**2.0) * w_)
@@ -259,17 +288,26 @@ for i, f in enumerate(args.visfiles):
         print(' applying reweighting')
         w_ *= reweight_factor
 
+    if args.sz > 0 and args.astrom:
+        nu = len(u_)
+        u_, v_, re_, im_, w_ = functions.bin_uv(u_, v_, re_, im_, w_, size_arcsec=args.sz)
+        print(f" original nvis: {nu}, binned nvis: {len(u_)}")
+        n_uv.append(len(u_))
+
     u = np.append(u, u_)
     v = np.append(v, v_)
     w = np.append(w, w_)
     re = np.append(re, re_)
     im = np.append(im, im_)
 
-if args.sz > 0:
+if args.sz > 0 and not args.astrom:
     nu = len(u)
     print('')
     u, v, re, im, w = functions.bin_uv(u, v, re, im, w, size_arcsec=args.sz)
-    print(f" original nvis: {nu}, fitting nvis: {len(u)}")
+    print(f" original nvis: {nu}, binned nvis: {len(u)}")
+    n_uv = [len(u)]
+else:
+    print(f"\nTotal nvis ({len(args.visfiles)} files): {sum_uv}, fitting nvis: {len(u)}")
 
 # set up the DHT
 arcsec = np.pi/180/3600
@@ -327,13 +365,13 @@ def lnprob(p, model=False):
         return -np.inf
 
     # u,v rotation
-    urot, ruv = functions.uv_trans(u, v, np.deg2rad(p[2]), np.deg2rad(p[3]))
+    urot, ruv = functions.uv_trans(u, v, np.deg2rad(p[n_off2]), np.deg2rad(p[n_off2+1]))
 
-    rp = p[4:4+nrp*nr].reshape((nr, -1))
-    rz_part = np.sin(np.deg2rad(p[3])) * urot * arcsec2pi
+    rp = p[n_off2+2:n_off2+2+nrp*nr].reshape((nr, -1))
+    rz_part = np.sin(np.deg2rad(p[n_off2+1])) * urot * arcsec2pi
 
     # radial profile, loop over components
-    vis = np.zeros(len(ruv))
+    vis = np.zeros(len(ruv), dtype=complex)
     sb = np.zeros(len(Rnk))  # sb is not really sb
     for i in range(nr):
         f = 1/2.35e-11*r_prof(Rnk/arcsec, rp[i, 1:])
@@ -377,10 +415,6 @@ def lnprob(p, model=False):
     if args.star:
         vis += p[istar]
 
-    # phase shift
-    rot = (u*p[0] + v*p[1])*arcsec2pi
-    vis = vis * np.exp(1j*rot)
-
     # point background source, all at once
     if args.pt:
         ptp = p[ipt:ipt+npt*3].reshape((npt, -1))
@@ -395,6 +429,17 @@ def lnprob(p, model=False):
             vis_ = bgp[i, 2] * np.exp(-0.5*np.square(bgp[i, 3]*ruv*arcsec2pi))
             rot = bgp[i, 0] * u + bgp[i, 1] * v
             vis += vis_ * np.exp(1j*rot*arcsec2pi)
+
+    # phase shift, for astrom every vis gets its
+    # own shift, but same applied to all otherwise
+    if args.astrom:
+        shift_u = np.repeat(p[0:n_off2:2], n_uv)
+        shift_v = np.repeat(p[1:n_off2:2], n_uv)
+        rot = (u*shift_u + v*shift_v)*arcsec2pi
+    else:
+        rot = (u*p[0] + v*p[1])*arcsec2pi
+
+    vis = vis * np.exp(1j*rot)
 
     # return model
     if model:
@@ -517,10 +562,27 @@ p = np.median(sampler.chain[:, burn:, :].reshape((-1, ndim)), axis=0)
 p25 = np.percentile(sampler.chain[:, burn:, :].reshape((-1, ndim)), 2.5, axis=0)
 p97 = np.percentile(sampler.chain[:, burn:, :].reshape((-1, ndim)), 97.5, axis=0)
 np.save(f'{outdir}/best_params.npy', np.vstack((params, p, p25, p97)))
-for f in args.visfiles:
+
+# change some things since we will run lnprob for a single dataset
+limits = np.inf * np.vstack((-1*np.ones(n_param-n_off2+2),
+                             np.ones(n_param-n_off2+2))).T
+iin -= n_off2-2
+istar -= n_off2-2
+ipt -= n_off2-2
+ibg -= n_off2-2
+n_off_orig = n_off
+n_off = 1
+n_off2 = 2
+
+for i,f in enumerate(args.visfiles):
     print(f' model for {os.path.basename(f)}')
     u, v, re, im, w = functions.read_vis(f)
-    _, _, vis, _ = lnprob(p, model=True)
+    n_uv = len(u)
+    if args.astrom:
+        p_ = np.append([p[2*i], p[2*i+1]], p[2*n_off_orig:])
+    else:
+        p_ = p
+    _, _, vis, _ = lnprob(p_, model=True)
     f_ = os.path.splitext(os.path.basename(f))
     f_save = f_[0] + '-vismod' + f_[1]
     np.save(f'{outdir}/{f_save}', vis)
