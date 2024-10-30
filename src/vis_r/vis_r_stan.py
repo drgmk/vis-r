@@ -247,11 +247,12 @@ def vis_r_stan_radial():
 
     h = frank.hankel.DiscreteHankelTransform(r_max*arcsec, nhpt)
     Rnk, Qnk = h.get_collocation_points(r_max*arcsec, nhpt)
+    Qzero = np.append(0, Qnk)
 
     data['nhpt'] = nhpt
-    data['Ykm'] = h._Ykm
+    data['Ykm'] = h.coefficients(q=Qzero)
     data['Rnk'] = Rnk/arcsec
-    data['Qnk'] = Qnk
+    data['Qnk'] = Qzero
     data['hnorm'] = 1/2.35e-11 * (2 * np.pi * (r_max*arcsec)**2) / h._j_nN
 
     print(f'Hankel points: {nhpt}')

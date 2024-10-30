@@ -123,8 +123,9 @@ data {{
     real {mul_str};
     vector[nr] {z_str};
     int nhpt;
-    matrix[nhpt,nhpt] Ykm;
-    vector[nhpt] Rnk, Qnk;
+    matrix[nhpt+1,nhpt] Ykm;
+    vector[nhpt] Rnk;
+    vector[nhpt+1] Qnk;
     real hnorm;
     {star_str}
     {bg_str}
@@ -141,13 +142,9 @@ transformed data {
     // data, convert u,v to sky x,y
     vector[nvis] u_ = u * arcsec2pi;
     vector[nvis] v_ = v * arcsec2pi;
-    // add a baseline of zero, so we can interpolate inside the
-    // shortest point in the DHT. the shortest point is duplicated below
-    vector[nhpt+1] Qnk_;
-    Qnk_[1] = 0;
-    for (i in 1:nhpt) {
-        Qnk_[i+1] = Qnk[i];
-    }
+    // this extra variable is a hangover from
+    // when Qnk did not include zero
+    vector[nhpt+1] Qnk_ = Qnk;
 
 }
 """
@@ -296,7 +293,8 @@ def model_core(pn, star=False, bg=False, pt=False, gq='vis'):
 """
 
     f_str = """
-    matrix[nhpt,nr] vnk, f;
+    matrix[nhpt+1,nr] vnk;
+    matrix[nhpt,nr] f;
 """
 
     if gq == 'vis' or gq is False:
@@ -349,9 +347,8 @@ def model_core(pn, star=False, bg=False, pt=False, gq='vis'):
                 vnk[:,i] = hnorm * Ykm * f[:,i];
                 vnk[:,i] = vnk[:,i] * pars[1,i]/vnk[1,i];
             }}
-            vnk_[1] = vnk[1]';
             for (i in 1:nhpt) {{
-                vnk_[i+1] = vnk[i]';
+                vnk_[i] = vnk[i]';
             }}
         }}
 
