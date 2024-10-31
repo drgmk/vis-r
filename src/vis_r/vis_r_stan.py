@@ -319,7 +319,7 @@ def vis_r_stan_radial():
         pickle.dump(fit.metric, f)
 
     df = fit.summary(percentiles=(5, 95))
-    print(df[df.index.str.contains('_') is False])
+    print(df[df.index.str.contains('_') == False])
     # print(df.filter(regex='[a-z]_', axis=0))
     # print(fit.diagnose())
 

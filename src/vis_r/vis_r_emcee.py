@@ -74,7 +74,7 @@ parser.add_argument('--rew', dest='reweight', action='store_true', default=False
                     help="Reweight visibilities")
 parser.add_argument('--min', dest='minimize', action='store_true', default=False,
                     help="Attempt initial minimisation")
-parser.add_argument('--walker-factor', dest='walk', metavar='4', type=int, default=4,
+parser.add_argument('--walker-factor', dest='walk', metavar='4', type=float, default=4,
                     help='walkers = factor * parameters for emcee')
 parser.add_argument('--steps', dest='steps', metavar='1400', type=int, default=1400,
                     help='Number of total steps for emcee')
@@ -343,6 +343,7 @@ while True:
 h = frank.hankel.DiscreteHankelTransform(r_max*arcsec, nhpt)
 Rnk, Qnk = h.get_collocation_points(r_max*arcsec, nhpt)
 Qzero = np.append(0, Qnk)
+Ykm = h.coefficients(q=Qzero)
 
 print(f'\nR_out: {r_max:.1f}, N: {nhpt}')
 pprint(([' min/max q_k: ', ' min/max u,v:'],
@@ -381,7 +382,7 @@ def lnprob(p, model=False):
         f = 1/2.35e-11*r_prof(Rnk/arcsec, rp[i, 1:])
         if args.surf_dens:
             f /= np.sqrt(Rnk/arcsec)
-        fth = h.transform(f, q=Qzero)  # or fth = np.dot(Ykm, f)
+        fth = np.dot(Ykm, f)  # same as fth = h.transform(f, q=Qzero)
         # normalise on shortest (zero) baseline
         fth = fth * rp[i, 0] / fth[0]
         sb += rp[i, 0] * f
@@ -463,7 +464,7 @@ def lnprob(p, model=False):
 
 
 # mcmc setup
-nwalkers = args.walk*ndim
+nwalkers = int(args.walk*ndim)
 savefile = f'{outdir}/vismod.h5'
 backend = emcee.backends.HDFBackend(savefile)
 
