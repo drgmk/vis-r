@@ -16,6 +16,8 @@ from . import vis_r_gauss_code
 
 def vis_r_stan_gauss():
 
+    # exit("this code is not intended to be used, now incorporated into stan hankel code")
+
     # setup
     parser = argparse.ArgumentParser(description='vis-r-stan (gaussian)')
     parser.add_argument('-v', dest='visfiles', metavar=('vis1.npy', 'vis2.npy'), nargs='+', required=True,
@@ -46,6 +48,8 @@ def vis_r_stan_gauss():
                         help='pickled metric')
     parser.add_argument('--inc-lim', dest='inc_lim', action='store_true', default=False,
                         help="limit range of inclinations")
+    parser.add_argument('--pa-lim', dest='pa_lim', action='store_true', default=False,
+                        help="limit range of position angles")
     parser.add_argument('--r-lim', dest='r_lim', action='store_true', default=False,
                         help="limit range of radii to be +ve")
     parser.add_argument('--dr-lim', dest='dr_lim', action='store_true', default=False,
@@ -144,7 +148,7 @@ def vis_r_stan_gauss():
     else:
         data['npt'] = 0
 
-    stanfile = f'/tmp/alma{str(np.random.randint(100_000))}.stan'
+    stanfile = f'/tmp/visrgauss{str(np.random.randint(100_000))}.stan'
 
     # load data
     u_ = v_ = Re_ = Im_ = w_ = np.array([])
@@ -217,22 +221,20 @@ def vis_r_stan_gauss():
 
     print(f"original nvis:{len(u_)}, fitting nvis:{data['nvis']}")
 
-    code = stan_gauss_code.get_code(bg=data['nbg'] > 0, pt=data['npt'] > 0,
-                                   star=args.star, gq=False,
-                                   inc_lim=args.inc_lim, r_lim=args.r_lim, dr_lim=args.dr_lim,
-                                   z_prior=args.zlim)
+    code = vis_r_gauss_code.get_code(bg=data['nbg'] > 0, pt=data['npt'] > 0,
+                                     star=args.star, gq=False,
+                                     inc_lim=args.inc_lim, pa_lim=args.pa_lim,
+                                     r_lim=args.r_lim, dr_lim=args.dr_lim,
+                                     z_prior=args.zlim)
     with open(stanfile, 'w') as f:
         f.write(code)
 
     model = CmdStanModel(stan_file=stanfile, cpp_options={'STAN_THREADS': 'TRUE'})
-    # model = CmdStanModel(stan_file='/Users/grant/astro/projects/alma/alma/alma/alma_test.stan',
-    #                      cpp_options={'STAN_THREADS': 'TRUE'})
-    # for k in inits.keys():
-    #     inits[k] = np.zeros_like(inits[k])+0.001
 
     # print(model.exe_info())
 
-    # initial run with pathfinder to estimate parameters and metric
+    # initial run with pathfinder to estimate parameters and multipliers
+    # so that parameters have unit scale
     metric = 'dense'
     if args.pf:
         pf = model.pathfinder(data=data,
@@ -246,8 +248,10 @@ def vis_r_stan_gauss():
                             titles=np.array(pf.column_names)[ok], show_titles=True)
         fig.savefig(f'{outdir}/corner_pf.pdf')
 
-        ok = ['_' not in c for c in cn]
-        metric = {'inv_metric': np.cov(pf.draws()[:, ok].T)}
+        # ok = ['_' not in c for c in cn]
+        # if we wanted to set metric rather than scales
+        # metric = {'inv_metric': np.cov(pf.draws()[:, ok].T)}
+        # print(np.diag(np.cov(pf.draws()[:, ok].T)))
 
         for k in inits.keys():
             med = np.median(pf.stan_variable(f'{k}_'), axis=0)
@@ -255,8 +259,6 @@ def vis_r_stan_gauss():
             data[f'{k}_mul'] = 1 / np.mean(std)
             inits[k] = med * data[f'{k}_mul']
             data[f'{k}_0'] = inits[k]
-            # print(k, data[f'{k}_mul'], inits[k], (inits[k]/data[f'{k}_mul']))
-
 
     # HMC sampling
     fit = model.sample(data=data, chains=6,
@@ -302,10 +304,10 @@ def vis_r_stan_gauss():
 
     # save model
     if args.save:
-        code = stan_gauss_code.get_code(bg=data['nbg'] > 0, pt=data['npt'] > 0,
-                                        star=args.star, gq=True,
-                                        inc_lim=args.inc_lim, r_lim=args.r_lim, dr_lim=args.dr_lim,
-                                        z_prior=args.zlim)
+        code = vis_r_gauss_code.get_code(bg=data['nbg'] > 0, pt=data['npt'] > 0,
+                                         star=args.star, gq=True,
+                                         inc_lim=args.inc_lim, r_lim=args.r_lim, dr_lim=args.dr_lim,
+                                         z_prior=args.zlim)
         with open(stanfile, 'w') as f:
             f.write(code)
 

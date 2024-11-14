@@ -1,7 +1,6 @@
 import shutil
 import os
 import argparse
-import pickle
 import numpy as np
 from scipy.special import jn_zeros
 from cmdstanpy import CmdStanModel
@@ -38,10 +37,12 @@ Then uncomment the code below to point `cmdstanpy` to this version:
 # try:
 #     vs = glob.glob(os.path.expanduser('~') + '/.cmdstan/*')
 #     vs.sort()
-#     cmdstanpy.set_cmdstan_path(vs[-1])
+#     cmdstanpy.set_cmdstan_path(vs[0])
 # except:
 #     pass
 
+import cmdstanpy
+print(f'\nUsing cmdstan {cmdstanpy.cmdstan_version()} in\n{cmdstanpy.cmdstan_path()}\n')
 
 def vis_r_stan_radial():
 
@@ -73,8 +74,6 @@ def vis_r_stan_radial():
                         type=float, nargs=6, help='Resolved background sources')
     parser.add_argument('--pt', dest='pt', metavar=('dra', 'ddec', 'f'), action='append',
                         type=float, nargs=3, help='Unresolved background sources')
-    parser.add_argument('-m', dest='metric', metavar='metric.pkl', type=str,
-                        help='Pickled metric')
     parser.add_argument('--rmax', dest='rmax', metavar='rmax', type=float, default=None,
                         help='Rmax for Hankel transform')
     parser.add_argument('--inc-lim', dest='inc_lim', action='store_true', default=False,
@@ -89,8 +88,8 @@ def vis_r_stan_radial():
                         help="Don't save model")
     parser.add_argument('--save-chains', dest='save_chains', action='store_true', default=False,
                         help="Export model chains as numpy")
-    parser.add_argument('--pf', dest='pf', action='store_true', default=False,
-                        help="Run pathfinder for initial posteriors")
+    parser.add_argument('--no-pf', dest='pf', action='store_false', default=True,
+                        help="Don't run pathfinder for initial posteriors")
 
     args = parser.parse_args()
 
@@ -119,14 +118,14 @@ def vis_r_stan_radial():
         assert p.shape[1] == 5
         inits['sigi'] = p[:, 2]
         inits['ao'] = p[:, 3]
-    elif args.type == 'erf_power':
+    elif args.type == 'erf2_power':
         assert p.shape[1] == 7
         inits['ri'] = inits.pop('r')
         inits['ai'] = p[:, 2]
         inits['sigi'] = p[:, 3]
         inits['ro'] = p[:, 4]
         inits['ao'] = p[:, 5]
-    elif args.type == 'gauss':
+    elif args.type == 'gauss' or args.type == 'gauss_hankel':
         assert p.shape[1] == 4
         inits['dr'] = p[:, 2]
     elif args.type == 'gauss2':
@@ -159,28 +158,12 @@ def vis_r_stan_radial():
         mul[p] = sc
         if p in ['norm', 'bgn', 'ptn', 'star']:
             mul[p] *= args.norm_mul
-        if p in ['bgpa', 'bgi']:
+        if p in ['pa', 'inc', 'bgpa', 'bgi']:
             mul[p] /= args.norm_mul
         if p in ['ai', 'ao', 'gam']:
             mul[p] /= args.norm_mul*10
         if p in ['zh'] and args.zlim:
             mul[p] = 1.0
-
-    # use the std from a previous run if desired
-    if args.metric:
-        with open(args.metric, 'rb') as f:
-            par = pickle.load(f)
-            mul = pickle.load(f)
-            std = pickle.load(f)
-            # metric = pickle.load(f)
-
-        for p in par:
-            if '_' not in p:
-                p_ = p.split('[')[0]
-                if '[2]' not in p and '[3]' not in p:
-                    mul[p_] = mul[p_] / std[p]
-
-        print(f'scaling from previous std: {mul}')
 
     # set up parameter multipliers
     data = {'nr': len(inits['norm'])}
@@ -215,6 +198,7 @@ def vis_r_stan_radial():
         re_ = np.append(re_, re)
         im_ = np.append(im_, im)
 
+    print('')
     if args.sz > 0:
         data['u'], data['v'], data['re'],  data['im'], data['w'] = \
             functions.bin_uv(u_, v_, re_, im_, w_, size_arcsec=args.sz)
@@ -233,35 +217,33 @@ def vis_r_stan_radial():
     arcsec = np.pi/180/3600
     uvmax = np.max(np.sqrt(data['u']**2 + data['v']**2))
     uvmin = np.min(np.sqrt(data['u']**2 + data['v']**2))
-    # estimate lowest frequency given inclination, and include a safety factor
-    fac = 1.5  # safety factor
-    # r_max = jn_zeros(0, 1)[0] / (2*np.pi*uvmin*np.cos(inits['inc']/mul['inc'])) / arcsec * fac
-    r_max = jn_zeros(0, 1)[0] / (2*np.pi*uvmin) / arcsec * fac
+    if args.sz > 0:
+        uvmin_ = functions.get_duv(size_arcsec=args.sz)
+    else:
+        uvmin_ = uvmin
 
-    nhpt = 1
-    while True:
-        q_tmp = jn_zeros(0, nhpt)[-1]
-        if q_tmp > uvmax * 2*np.pi*r_max*arcsec:
-            break
-        nhpt += 1
+    # set up q array
+    nq = int(np.ceil((uvmax+uvmin_/2)/uvmin_))
+    r_out = jn_zeros(0, nq+1)[-1] / (2*np.pi*uvmax) / arcsec
+    Qzero = np.arange(nq) * uvmin_ + uvmin_/2
+    Qzero = np.append(0, Qzero)
 
-    h = frank.hankel.DiscreteHankelTransform(r_max*arcsec, nhpt)
-    Rnk, Qnk = h.get_collocation_points(r_max*arcsec, nhpt)
-    Qzero = np.append(0, Qnk)
+    # set up transform, pre-computing new matrix for transform
+    nhpt = 300  # recommended by frank
+    h = frank.hankel.DiscreteHankelTransform(r_out*arcsec, nhpt)
+    Rnk, Qnk = h.get_collocation_points(r_out*arcsec, nhpt)
+
+    print(f'\nNq: {nq}, Nhpt: {nhpt}')
+    print(f' Q_min: {Qzero[1]}, uv_min: {uvmin}')
+    print(f' Q_max: {Qzero[-1]}, uv_max: {uvmax}')
+    print('')
 
     data['nhpt'] = nhpt
+    data['nq'] = nq+1
     data['Ykm'] = h.coefficients(q=Qzero)
     data['Rnk'] = Rnk/arcsec
     data['Qnk'] = Qzero
-    data['hnorm'] = 1/2.35e-11 * (2 * np.pi * (r_max*arcsec)**2) / h._j_nN
-
-    print(f'Hankel points: {nhpt}')
-    if 2*Qnk[0] > uvmin:
-        print(f' WARNING: minimum Q not much smaller than minimum u,v')
-        print(f'          potential problem for highly inclined disks')
-    print(f' R_max: {r_max}')
-    print(f' Q_min: {Qnk[0]}, uv_min: {uvmin}')
-    print(f' Q_max: {Qnk[-1]}, uv_max: {uvmax}')
+    data['hnorm'] = 1/2.35e-11  #* (2 * np.pi * (r_out*arcsec)**2) / h._j_nN
 
     # get stan code and compile
     code = vis_r_stan_code.get_code(args.type, gq=False,
@@ -270,7 +252,7 @@ def vis_r_stan_radial():
                                     inc_lim=args.inc_lim, pa_lim=args.pa_lim,
                                     z_prior=args.zlim)
 
-    stanfile = f'/tmp/alma{str(np.random.randint(100_000))}.stan'
+    stanfile = f'/tmp/visr{str(np.random.randint(100_000))}.stan'
     with open(stanfile, 'w') as f:
         f.write(code)
 
@@ -279,11 +261,13 @@ def vis_r_stan_radial():
 
     # print(model.exe_info())
 
-    # initial run with pathfinder to estimate parameters and metric
+    # initial run with pathfinder to estimate parameter multipliers
+    # so that metric is approximately unit diagonal (stan init)
     metric = 'dense'
     if args.pf:
         pf = model.pathfinder(data=data, inits=inits,
-                              # show_console=True
+                              # output_dir=f'{outdir}/pf'
+                              # show_console=True,
                               )
 
         cn = pf.column_names
@@ -292,16 +276,17 @@ def vis_r_stan_radial():
                             titles=np.array(pf.column_names)[ok], show_titles=True)
         fig.savefig(f'{outdir}/corner_pf.pdf')
 
-        ok = ['_' not in c for c in cn]
-        metric = {'inv_metric': np.cov(pf.draws()[:, ok].T)}
+        # ok = ['_' not in c for c in cn]
+        # if we wanted to set metric rather than scales
+        # metric = {'inv_metric': np.cov(pf.draws()[:, ok].T)}
+        # print(np.diag(np.cov(pf.draws()[:, ok].T)))
 
         for k in inits.keys():
             med = np.median(pf.stan_variable(f'{k}_'), axis=0)
             std = np.std(pf.stan_variable(f'{k}_'), axis=0)
-            data[f'{k}_mul'] = 1 / np.mean(std)
+            data[f'{k}_mul'] = 1 / np.mean(std)  # comment if setting metric above
             inits[k] = med * data[f'{k}_mul']
             data[f'{k}_0'] = inits[k]
-            # print(k, data[f'{k}_mul'], inits[k], (inits[k]/data[f'{k}_mul']))
 
     fit = model.sample(data=data, chains=6,
                        metric=metric,
@@ -312,15 +297,9 @@ def vis_r_stan_radial():
                        refresh=50)
 
     # shutil.copy(fit.metadata.cmdstan_config['profile_file'], outdir)
-    with open(f'{outdir}/metric.pkl', 'wb') as f:
-        pickle.dump(fit.column_names, f)
-        pickle.dump(mul, f)
-        pickle.dump(fit.summary()['StdDev'], f)
-        pickle.dump(fit.metric, f)
 
     df = fit.summary(percentiles=(5, 95))
     print(df[df.index.str.contains('_') == False])
-    # print(df.filter(regex='[a-z]_', axis=0))
     # print(fit.diagnose())
 
     xr = fit.draws_xr()
@@ -328,19 +307,19 @@ def vis_r_stan_radial():
         xr = xr.drop_vars(k)
 
     if args.save_chains:
-        fit.save_csvfiles(outdir)
+        # fit.save_csvfiles(outdir)
         np.save(f'{outdir}/chains.npy', xr.to_dataarray().as_numpy().squeeze())
 
     _ = az.plot_trace(xr)
     fig = _.ravel()[0].figure
     fig.tight_layout()
-    fig.savefig(f'{outdir}/trace.pdf')
+    fig.savefig(f'{outdir}/chains.png')
 
     best = {}
     for k in fit.stan_variables().keys():
         if '_' in k and '__' not in k:
             best[k] = np.median(fit.stan_variable(k), axis=0)
-    print(f'best: {best}')
+    # print(f'best: {best}')
 
     # comment if memory problems ("python killed")
     fig = corner.corner(xr, show_titles=True)
@@ -349,31 +328,32 @@ def vis_r_stan_radial():
     # save model visibilities
     if args.save:
 
-        # save radial profiles
-        code = vis_r_stan_code.get_code(args.type, gq='prof',
-                                        star=args.star is not None,
-                                        bg=data['nbg'] > 0, pt=data['npt'] > 0,
-                                        inc_lim=args.inc_lim, pa_lim=args.pa_lim,
-                                        z_prior=args.zlim)
-        with open(stanfile, 'w') as f:
-            f.write(code)
+        # how to generate and save radial profiles from the sampling
+        if 0:
+            code = vis_r_stan_code.get_code(args.type, gq='prof',
+                                            star=args.star is not None,
+                                            bg=data['nbg'] > 0, pt=data['npt'] > 0,
+                                            inc_lim=args.inc_lim, pa_lim=args.pa_lim,
+                                            z_prior=args.zlim)
+            with open(stanfile, 'w') as f:
+                f.write(code)
 
-        model = CmdStanModel(stan_file=stanfile,
-                             cpp_options={'STAN_THREADS': 'TRUE'})
+            model = CmdStanModel(stan_file=stanfile,
+                                 cpp_options={'STAN_THREADS': 'TRUE'})
 
-        gq = model.generate_quantities(data=data, previous_fit=fit)
-        prof = gq.stan_variables()['f']
-        np.save(f"{outdir}/profile_r.npy", Rnk/arcsec)
-        np.save(f"{outdir}/profile_f.npy", prof)
+            gq = model.generate_quantities(data=data, previous_fit=fit)
+            prof = gq.stan_variables()['f']
+            np.save(f"{outdir}/profile_r.npy", Rnk/arcsec)
+            np.save(f"{outdir}/profile_f.npy", prof)
 
-        fig, ax = plt.subplots()
-        for i in range(prof.shape[-1]):
-            for n in range(100):
-                ax.plot(Rnk/arcsec, prof[np.random.default_rng().integers(prof.shape[0]), :, i])
-        ax.set_xlabel('radius / arcsec')
-        ax.set_ylabel('flux / Jy/sq arcsec')
-        fig.tight_layout()
-        fig.savefig(f"{outdir}/profile.pdf")
+            fig, ax = plt.subplots()
+            for i in range(prof.shape[-1]):
+                for n in range(100):
+                    ax.plot(Rnk/arcsec, prof[np.random.default_rng().integers(prof.shape[0]), :, i])
+            ax.set_xlabel('radius / arcsec')
+            ax.set_ylabel('flux / Jy/sq arcsec')
+            fig.tight_layout()
+            fig.savefig(f"{outdir}/profile.pdf")
 
         # save model visibilities
         code = vis_r_stan_code.get_code(args.type, gq='vis',
@@ -389,7 +369,7 @@ def vis_r_stan_radial():
 
         for k in inits.keys():
             inits[k] = best[f'{k}_'] * mul[k]
-        fit1 = model.sample(data=data, inits=inits, fixed_param=True,
+        fit1 = model.sample(data=data, inits=inits, fixed_param=True, adapt_engaged=False,
                             chains=1, iter_warmup=0, iter_sampling=1)
 
         for f in visfiles:

@@ -64,8 +64,10 @@ transformed data {
 }
 """
 
-def parameters(star=False, bg=False, pt=False, inc_lim=False, r_lim=False, dr_lim=False, zh_lim=True, nbg_lim=True):
+def parameters(star=False, bg=False, pt=False, inc_lim=False, pa_lim=False,
+               r_lim=False, dr_lim=False, zh_lim=True, nbg_lim=True):
     inc = '<lower=0, upper=inc_mul*pi()/2>' if inc_lim else ''
+    pa = '<lower=0, upper=inc_mul*pi()>' if pa_lim else ''
     r = '<lower=0>' if r_lim else ''
     dr = '<lower=0>' if dr_lim else ''
     zh = '<lower=0>' if zh_lim else ''
@@ -93,7 +95,7 @@ def parameters(star=False, bg=False, pt=False, inc_lim=False, r_lim=False, dr_li
 parameters {{
     real dra;
     real ddec;
-    real pa;
+    real{pa} pa;
     real{inc} inc;
     vector{r}[nr] r;
     vector[nr] norm;
@@ -275,7 +277,7 @@ def model_lnprob(star=False, bg=False, pt=False, z_prior=None):
 
 
 def get_code(star=False, bg=False, pt=False, gq=False,
-             r_lim=False, dr_lim=False, inc_lim=False, z_prior=None):
+             r_lim=False, dr_lim=False, inc_lim=False, pa_lim=False, z_prior=None):
 
     model = "model {\n" + model_core(star=star, bg=bg, pt=pt) + \
             model_lnprob(star=star, bg=bg, pt=pt, z_prior=z_prior)
@@ -283,7 +285,7 @@ def get_code(star=False, bg=False, pt=False, gq=False,
     generated_quantities = "generated quantities {" + model_core(star=star, bg=bg, pt=pt) + "\n}"
 
     code = functions + data(star=star, bg=bg, pt=pt) + transformed_data + \
-           parameters(star=star, bg=bg, pt=pt, inc_lim=inc_lim, r_lim=r_lim, dr_lim=dr_lim) + \
+           parameters(star=star, bg=bg, pt=pt, inc_lim=inc_lim, pa_lim=pa_lim, r_lim=r_lim, dr_lim=dr_lim) + \
            transformed_parameters(star=star, bg=bg, pt=pt)
     if gq:
         return code + generated_quantities

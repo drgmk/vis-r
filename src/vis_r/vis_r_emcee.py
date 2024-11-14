@@ -64,8 +64,6 @@ parser.add_argument('--bg', dest='bg', metavar=('dra', 'ddec', 'f', 'sigma', 'pa
                     type=float, nargs=6, help='Resolved background sources')
 parser.add_argument('--pt', dest='pt', metavar=('dra', 'ddec', 'f'), action='append',
                     type=float, nargs=3, help='Unresolved background sources')
-parser.add_argument('--rmax', dest='rmax', metavar='rmax', type=float, default=None,
-                    help='Rmax for Hankel transform')
 parser.add_argument('--z-lim', dest='zlim', metavar='0.2', type=float, default=0.2,
                     help='hard upper limit on z/r')
 parser.add_argument('--test', dest='test', action='store_true', default=False,
@@ -86,6 +84,8 @@ parser.add_argument('--prune', dest='prune', action='store_true', default=False,
                     help="Prune restored walkers to median")
 parser.add_argument('--threads', dest='threads', metavar='Ncpu', type=int, default=None,
                     help='Number of threads for emcee')
+parser.add_argument('--save-chains', dest='save_chains', action='store_true', default=False,
+                    help="Export model chains as numpy")
 
 args = parser.parse_args()
 
@@ -277,7 +277,7 @@ if not os.path.exists(outdir):
         exit()
 
 # load data
-print(f'Loading data')
+print(f'\nLoading data')
 u = v = re = im = w = np.array([])
 n_uv = []
 sum_uv = 0
@@ -319,40 +319,30 @@ arcsec2pi = arcsec*2*np.pi
 
 uvmax = np.max(np.sqrt(u**2 + v**2))
 uvmin = np.min(np.sqrt(u**2 + v**2))
-
-if args.rmax:
-    r_max = args.rmax
+if args.sz > 0:
+    uvmin_ = functions.get_duv(size_arcsec=args.sz)
 else:
-    # r_max = jn_zeros(0, 1)[0] / (2*np.pi*uvmin*np.cos(np.deg2rad(p0[3]))) / arcsec
-    r_max = jn_zeros(0, 1)[0] / (2*np.pi*uvmin) / arcsec
+    uvmin_ = uvmin
 
-# set based on probable primary beam HWHM
-if r_max < 10:
-    r_max = 10
+# set up q array
+nq = np.ceil((uvmax+uvmin_/2)/uvmin_)
+r_out = jn_zeros(0, nq+1)[-1] / (2*np.pi*uvmax) / arcsec
+Qzero = np.arange(nq) * uvmin_ + uvmin_/2
+Qzero = np.append(0, Qzero)
 
-# this is lazy, should do bisection
-nhpt = 1
-while True:
-    q_tmp = jn_zeros(0, nhpt)[-1]
-    if q_tmp > uvmax * 2*np.pi*r_max*arcsec:
-        break
-    nhpt += 1
-
-# set up transform, adding zero baseline to list of Qnk
-# and pre-computing new matrix for transform
-h = frank.hankel.DiscreteHankelTransform(r_max*arcsec, nhpt)
-Rnk, Qnk = h.get_collocation_points(r_max*arcsec, nhpt)
-Qzero = np.append(0, Qnk)
+# set up transform, pre-computing new matrix for transform
+nhpt = 300  # recommended by frank
+h = frank.hankel.DiscreteHankelTransform(r_out*arcsec, nhpt)
+Rnk, Qnk = h.get_collocation_points(r_out*arcsec, nhpt)
 Ykm = h.coefficients(q=Qzero)
 
-print(f'\nR_out: {r_max:.1f}, N: {nhpt}')
+print(f'\nNq: {nq+1}, Nhpt: {nhpt}')
 pprint(([' min/max q_k: ', ' min/max u,v:'],
-        [f'{Qnk[0]:.0f}', f'{uvmin:.0f}'],
-        [f'{Qnk[-1]:.0f}', f'{uvmax:.0f}']))
-
+        [f'{Qzero[1]:.0f}', f'{uvmin:.0f}'],
+        [f'{Qzero[-1]:.0f}', f'{uvmax:.0f}']))
 
 def lnprob(p, model=False):
-    '''Return ln probability of model.
+    """Return ln probability of model.
 
     Parameters
     ----------
@@ -364,7 +354,7 @@ def lnprob(p, model=False):
     Uses Hankel transform for radial profile, and analytic models for
     other components. Equations for those can be found for example in
     table 10.2 of 2017isra.book.....T
-    '''
+    """
 
     if np.any(p < limits[:, 0]) or np.any(p > limits[:, 1]):
         return -np.inf
@@ -482,7 +472,6 @@ else:
 print('\nFitting parameters (name, initial value, lo/hi limits)')
 print(  '------------------------------------------------------')
 pprint((range(len(p0)), params, p0, limits[:, 0], limits[:, 1]))
-print('')
 
 test = lnprob(p0)
 print(f'\nInitial ln(prob) {test}\n')
@@ -560,7 +549,8 @@ fig.align_ylabels(ax[:, 0])
 fig.savefig(f'{outdir}/chains.png', dpi=150)
 
 # save chains as numpy
-# np.save(f'{outdir}/chains.npy', sampler.chain)
+if args.save_chains:
+    np.save(f'{outdir}/chains.npy', sampler.chain)
 
 # save model and visibilities
 print('Saving')
