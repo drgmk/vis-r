@@ -97,6 +97,10 @@ def vis_r_stan_radial():
     if not os.path.exists(outdir):
         os.mkdir(outdir)
 
+    standir = f'{outdir}/stan'
+    if not os.path.exists(standir):
+        os.mkdir(standir)
+
     visfiles = args.visfiles
 
     # set up initial parameters
@@ -252,9 +256,8 @@ def vis_r_stan_radial():
                                     inc_lim=args.inc_lim, pa_lim=args.pa_lim,
                                     z_prior=args.zlim)
 
-    stanfile = f'/tmp/visr{str(np.random.randint(100_000))}.stan'
-    with open(stanfile, 'w') as f:
-        f.write(code)
+    stanfile = f'{standir}/vis-r.stan'
+    functions.update_stanfile(code, stanfile)
 
     model = CmdStanModel(stan_file=stanfile,
                          cpp_options={'STAN_THREADS': 'TRUE'})
@@ -335,8 +338,8 @@ def vis_r_stan_radial():
                                             bg=data['nbg'] > 0, pt=data['npt'] > 0,
                                             inc_lim=args.inc_lim, pa_lim=args.pa_lim,
                                             z_prior=args.zlim)
-            with open(stanfile, 'w') as f:
-                f.write(code)
+            stanfile = f'{standir}/vis-r-prof.stan'
+            functions.update_stanfile(code, stanfile)
 
             model = CmdStanModel(stan_file=stanfile,
                                  cpp_options={'STAN_THREADS': 'TRUE'})
@@ -361,8 +364,8 @@ def vis_r_stan_radial():
                                         bg=data['nbg'] > 0, pt=data['npt'] > 0,
                                         inc_lim=args.inc_lim, pa_lim=args.pa_lim,
                                         z_prior=args.zlim)
-        with open(stanfile, 'w') as f:
-            f.write(code)
+        stanfile = f'{standir}/vis-r-gq.stan'
+        functions.update_stanfile(code, stanfile)
 
         model = CmdStanModel(stan_file=stanfile,
                              cpp_options={'STAN_THREADS': 'TRUE'})

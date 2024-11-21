@@ -1,6 +1,26 @@
+import hashlib
+import os
 import numpy as np
 from scipy.stats import binned_statistic, binned_statistic_2d
 from scipy.special import erfc
+
+
+def update_stanfile(code, file):
+    """Update stan file only if changed."""
+    hasher = hashlib.md5()
+    hasher.update(code.encode())
+    newhash = hasher.hexdigest()
+
+    hasher = hashlib.md5()
+    oldhash = ''
+    if os.path.exists(file):
+        with open(file) as f:
+            hasher.update(f.read().encode())
+            oldhash = hasher.hexdigest()
+
+    if newhash != oldhash:
+        with open(file, 'w') as f:
+            f.write(code)
 
 
 def read_vis(f):
