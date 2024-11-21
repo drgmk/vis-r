@@ -297,30 +297,30 @@ def model_core(pn, gauss=False, star=False, bg=False, pt=False, gq='vis'):
 
     if gauss:
         core_str = """
-        profile("sqrt"){
+//        profile("sqrt"){
             ruv2 = square(urot*cos(inc_rad)) + square(vrot);
             ruv = sqrt(ruv2);
-        }
+//        }
     
-        profile("bessel"){
+//        profile("bessel"){
             matrix[nr, nvis] rz = (zh_ .* r_) * sin(inc_rad) * urot';
             mod = (norm_' * (bessel_first_kind(0, r_ * ruv') .* exp(-0.5*(square(dr_)*ruv2' + square(rz)))))';
-        }
+//        }
         """
     else:
         core_str = """
-        profile("sqrt"){
+//        profile("sqrt"){
             ruv2 = square(urot*cos(inc_rad)) + square(vrot);
             ruv = sqrt(ruv2);
             ruvi = sort_indices_asc(ruv);
             ruv = sort_asc(ruv);
-        }
+//        }
     
-        profile("radial"){
+//        profile("radial"){
             f = radial(Rnk, pars)';
-        }
+//        }
     
-        profile("hankel"){
+//        profile("hankel"){
             for (i in 1:nr) {
                 vnk[:,i] = hnorm * Ykm * f[:,i];
                 vnk[:,i] = vnk[:,i] * pars[1,i]/vnk[1,i];
@@ -328,19 +328,19 @@ def model_core(pn, gauss=False, star=False, bg=False, pt=False, gq='vis'):
             for (i in 1:nq) {
                 vnk_[i] = vnk[i]';
             }
-        }
+//        }
     
-        profile("interp"){
+//        profile("interp"){
             mod2d_ = interp_1d_linear(vnk_, to_array_1d(Qnk), to_array_1d(ruv/arcsec2pi));
             for (i in 1:nvis) {
                 mod2d[ruvi[i]] = mod2d_[i]';
             }
-        }
+//        }
         
-        profile("vertical"){
+//        profile("vertical"){
             matrix[nr, nvis] rz = (zh_ .* r_) * sin(inc_rad) * urot';
             mod = rows_dot_product(mod2d, exp(-0.5*(square(rz)))');
-        }
+//        }
         """
 
     if gq == 'vis' or gq is False:
@@ -373,18 +373,18 @@ def model_core(pn, gauss=False, star=False, bg=False, pt=False, gq='vis'):
         array[nvis] vector[nr] mod2d_;
         array[{np_str}] vector[nr] pars = {{ {p_str} }};
         
-        profile("rotation"){{
+//        profile("rotation"){{
             urot = ucos_pa - vsin_pa;
             vrot = u_*sin_pa + v_*cos_pa;
-        }}
+//        }}
         
         {core_str}
     
-        profile("translate"){{
+//        profile("translate"){{
             ruv = u_*dra_ + v_*ddec_;
             vismod_re = {star_str} .* cos(ruv);
             vismod_im = mod .* sin(ruv);
-        }}
+//        }}
     
         // attempt to diagnose lupdf errors, these seem
         // to be crazy input parameters
@@ -392,10 +392,10 @@ def model_core(pn, gauss=False, star=False, bg=False, pt=False, gq='vis'):
             print(dra_, ddec_, pa_, inc_, norm_, r_);
         }} */
     
-        profile("background"){{
+//        profile("background"){{
             {bg_str}
             {pt_str}
-        }}
+//        }}
     }}
 """
 
@@ -446,10 +446,10 @@ def model_lnprob(pn, star=False, bg=False, pt=False, z_prior=None):
     {pt_str}
     
     // log probability
-    profile("lnprob"){{
+//    profile("lnprob"){{
         target += normal_lupdf(vismod_re | re, sigma);
         target += normal_lupdf(vismod_im | im, sigma);
-    }}
+//    }}
 """
 
 
