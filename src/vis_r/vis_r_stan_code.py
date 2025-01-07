@@ -14,7 +14,7 @@ def functions(type_):
     elif type_ == 'erf2_power':
         func = "fout[i] = ( erf_in(r, p[2,i], p[4,i]) .* erf_out(r, p[5,i], p[6,i]) .* (r/p[2,i])^(p[3,i]) )';"
 
-    elif type_ == 'gauss':
+    elif type_ == 'gauss' or type_ == 'gauss_hankel':
         func = "fout[i] = gauss(r, p[2,i], p[3,i])';"
 
     elif type_ == 'gauss2':
@@ -122,10 +122,10 @@ data {{
     real zh_mul;
     real {mul_str};
     vector[nr] {z_str};
-    int nhpt;
-    matrix[nhpt+1,nhpt] Ykm;
+    int nhpt, nq;
+    matrix[nq,nhpt] Ykm;
     vector[nhpt] Rnk;
-    vector[nhpt+1] Qnk;
+    vector[nq] Qnk;
     real hnorm;
     {star_str}
     {bg_str}
@@ -139,20 +139,17 @@ transformed data {
     // constants
     real arcsec = pi()/180/3600;
     real arcsec2pi = arcsec * 2*pi();
+    real degtorad = pi()/180;
     // data, convert u,v to sky x,y
     vector[nvis] u_ = u * arcsec2pi;
     vector[nvis] v_ = v * arcsec2pi;
-    // this extra variable is a hangover from
-    // when Qnk did not include zero
-    vector[nhpt+1] Qnk_ = Qnk;
-
 }
 """
 
 
 def parameters(pn, pl, pu, star=False, bg=False, pt=False, inc_lim=False, pa_lim=False, zh_lim=True, nbg_lim=True):
-    inc = '<lower=0, upper=inc_mul*pi()/2>' if inc_lim else ''
-    pa = '<lower=0, upper=inc_mul*pi()>' if pa_lim else ''
+    inc = '<lower=0, upper=inc_mul*90>' if inc_lim else ''
+    pa = '<lower=0, upper=inc_mul*180>' if pa_lim else ''
     zh = '<lower=0>' if zh_lim else ''
     nbg = '<lower=0>' if nbg_lim else ''
 
@@ -249,7 +246,7 @@ transformed parameters {{
 """
 
 
-def model_core(pn, star=False, bg=False, pt=False, gq='vis'):
+def model_core(pn, gauss=False, star=False, bg=False, pt=False, gq='vis'):
 
     p_str = f'{pn[0]}_'
     np_str = 1
@@ -266,9 +263,10 @@ def model_core(pn, star=False, bg=False, pt=False, gq='vis'):
         bg_str = """
             if (nbg>0) {
                 for (i in 1:nbg) {
-                    urot = cos(bgpa_[i]) * u_ - sin(bgpa_[i]) * v_;
-                    vrot = sin(bgpa_[i]) * u_ + cos(bgpa_[i]) * v_;
-                    ruv2 = square(urot*cos(bgi_[i])) + square(vrot);
+                    real bgpa_rad = bgpa_[i]*degtorad
+                    urot = cos(bgpa_rad) * u_ - sin(bgpa_rad) * v_;
+                    vrot = sin(bgpa_rad) * u_ + cos(bgpa_rad) * v_;
+                    ruv2 = square(urot*cos(bgi_[i]*degtorad)) + square(vrot);
                     mod = bgn_[i] * exp(-0.5*square(bgr_[i])*ruv2);
                     ruv = bgx_[i] * u_ + bgy_[i] * v_;
                     vismod_re += mod .* cos(ruv);
@@ -293,9 +291,57 @@ def model_core(pn, star=False, bg=False, pt=False, gq='vis'):
 """
 
     f_str = """
-    matrix[nhpt+1,nr] vnk;
+    matrix[nq,nr] vnk;
     matrix[nhpt,nr] f;
 """
+
+    if gauss:
+        core_str = """
+//        profile("sqrt"){
+            ruv2 = square(urot*cos(inc_rad)) + square(vrot);
+            ruv = sqrt(ruv2);
+//        }
+    
+//        profile("bessel"){
+            matrix[nr, nvis] rz = (zh_ .* r_) * sin(inc_rad) * urot';
+            mod = (norm_' * (bessel_first_kind(0, r_ * ruv') .* exp(-0.5*(square(dr_)*ruv2' + square(rz)))))';
+//        }
+        """
+    else:
+        core_str = """
+//        profile("sqrt"){
+            ruv2 = square(urot*cos(inc_rad)) + square(vrot);
+            ruv = sqrt(ruv2);
+            ruvi = sort_indices_asc(ruv);
+            ruv = sort_asc(ruv);
+//        }
+    
+//        profile("radial"){
+            f = radial(Rnk, pars)';
+//        }
+    
+//        profile("hankel"){
+            for (i in 1:nr) {
+                vnk[:,i] = hnorm * Ykm * f[:,i];
+                vnk[:,i] = vnk[:,i] * pars[1,i]/vnk[1,i];
+            }
+            for (i in 1:nq) {
+                vnk_[i] = vnk[i]';
+            }
+//        }
+    
+//        profile("interp"){
+            mod2d_ = interp_1d_linear(vnk_, to_array_1d(Qnk), to_array_1d(ruv/arcsec2pi));
+            for (i in 1:nvis) {
+                mod2d[ruvi[i]] = mod2d_[i]';
+            }
+//        }
+        
+//        profile("vertical"){
+            matrix[nr, nvis] rz = (zh_ .* r_) * sin(inc_rad) * urot';
+            mod = rows_dot_product(mod2d, exp(-0.5*(square(rz)))');
+//        }
+        """
 
     if gq == 'vis' or gq is False:
         vis = True
@@ -305,8 +351,8 @@ def model_core(pn, star=False, bg=False, pt=False, gq='vis'):
         prof = True
 
     return f"""
-    {vis_str if vis else ''}
-    {f_str if prof else ''}
+        {vis_str if vis else ''}
+        {f_str if prof else ''}
 
     {{
         {vis_str if not vis else ''}
@@ -315,73 +361,42 @@ def model_core(pn, star=False, bg=False, pt=False, gq='vis'):
         vector[nvis] ruv;
         array[nvis] int ruvi;
         vector[nvis] ruv2;
-        real cos_pa = cos(pa_);
-        real sin_pa = sin(pa_);
+        real inc_rad = inc_ * degtorad;
+        real cos_pa = cos(pa_*degtorad);
+        real sin_pa = sin(pa_*degtorad);
         vector[nvis] vsin_pa = v_ * sin_pa;
         vector[nvis] ucos_pa = u_ * cos_pa;
         vector[nvis] urot;
         vector[nvis] vrot;
-        array[nhpt+1] vector[nr] vnk_;
+        array[nq] vector[nr] vnk_;
         matrix[nvis,nr] mod2d;
         array[nvis] vector[nr] mod2d_;
         array[{np_str}] vector[nr] pars = {{ {p_str} }};
         
-        profile("rotation"){{
+//        profile("rotation"){{
             urot = ucos_pa - vsin_pa;
             vrot = u_*sin_pa + v_*cos_pa;
-        }}
+//        }}
         
-        profile("sqrt"){{
-            ruv2 = square(urot*cos(inc_)) + square(vrot);
-            ruv = sqrt(ruv2);
-            ruvi = sort_indices_asc(ruv);
-            ruv = sort_asc(ruv);
-        }}
-
-        profile("radial"){{
-            f = radial(Rnk, pars)';
-        }}
-
-        profile("hankel"){{
-            for (i in 1:nr) {{
-                vnk[:,i] = hnorm * Ykm * f[:,i];
-                vnk[:,i] = vnk[:,i] * pars[1,i]/vnk[1,i];
-            }}
-            for (i in 1:nhpt) {{
-                vnk_[i] = vnk[i]';
-            }}
-        }}
-
-        profile("interp"){{
-            mod2d_ = interp_1d_linear(vnk_, to_array_1d(Qnk_), to_array_1d(ruv/arcsec2pi));
-            for (i in 1:nvis) {{
-                mod2d[ruvi[i]] = mod2d_[i]';
-            }}
-        }}
-
-        profile("vertical"){{
-            matrix[nr, nvis] rz = (zh_ .* r_) * sin(inc_) * urot';
-            mod = rows_dot_product(mod2d, exp(-0.5*(square(rz)))');
-        }}
-        
-        profile("translate"){{
+        {core_str}
+    
+//        profile("translate"){{
             ruv = u_*dra_ + v_*ddec_;
             vismod_re = {star_str} .* cos(ruv);
             vismod_im = mod .* sin(ruv);
-        }}
-
+//        }}
+    
         // attempt to diagnose lupdf errors, these seem
         // to be crazy input parameters
-/*        if (is_nan( (vismod_re[1]-re[1])/sigma[1] )) {{
+    /*    if (is_nan( (vismod_re[1]-re[1])/sigma[1] )) {{
             print(dra_, ddec_, pa_, inc_, norm_, r_);
         }} */
-
-        profile("background"){{
+    
+//        profile("background"){{
             {bg_str}
             {pt_str}
-        }}
+//        }}
     }}
-
 """
 
 
@@ -429,48 +444,62 @@ def model_lnprob(pn, star=False, bg=False, pt=False, z_prior=None):
     {star_str}
     {bg_str}
     {pt_str}
+    
     // log probability
-    profile("lnprob"){{
+//    profile("lnprob"){{
         target += normal_lupdf(vismod_re | re, sigma);
         target += normal_lupdf(vismod_im | im, sigma);
-    }}
-}}
+//    }}
 """
 
 
 def get_code(type_, star=False, bg=False, pt=False, gq=False,
              inc_lim=False, pa_lim=False, z_prior=None):
 
+    # limits, be VERY sparing with these since it affects sampling!
+    # better to use priors, so set all to no limit (with commented
+    # lines showing what might be used)
     if type_ == 'power':
         pn = ['norm', 'r', 'ai', 'ao', 'gam']
-        pl = [0,       0,   0,    None, 0]
-        pu = [None,  None,  None, 0,    None]
-    elif type_ == 'erf_power':
-        pn = ['norm', 'r', 'sigi', 'ao']
-        pl = [0,       0,   0,      None]
-        pu = [None,  None,  None,   0]
-    elif type_ == 'erf2_power':
-        pn = ['norm', 'ri', 'ai', 'sigi', 'ro', 'sigo']
-        pl = [0,       0,    0,    0,      None, 0]
-        pu = [None,  None,   None, None,   None, None]
-    elif type_ == 'gauss':
+        # pl = [0,       0,   0,    None, 0]
+        # pu = [None,  None,  None, 0,    None]
+        pl = [None,  None,  None, None, None]
+        pu = [None,  None,  None, None, None]
+    elif type_ == 'gauss' or type_ == 'gauss_bessel':
         pn = ['norm', 'r', 'dr']
-        pl = [0,       0,   0]
+        # pl = [0,       0,   0]
+        # pu = [None,  None,  None]
+        pl = [None,  None,  None]
         pu = [None,  None,  None]
     elif type_ == 'gauss2':
         pn = ['norm', 'r', 'dri', 'dro']
-        pl = [0,       0,   0,     0]
+        # pl = [0,       0,   0,     0]
+        # pu = [None,  None,  None,  None]
+        pl = [None,  None,  None,  None]
         pu = [None,  None,  None,  None]
+    elif type_ == 'erf_power':
+        pn = ['norm', 'r', 'sigi', 'ao']
+        # pl = [0,       0,   0,      None]
+        # pu = [None,  None,  None,   0]
+        pl = [None,  None,  None, None]
+        pu = [None,  None,  None, None]
+    elif type_ == 'erf2_power':
+        pn = ['norm', 'ri', 'ai', 'sigi', 'ro', 'sigo']
+        # pl = [0,       0,    0,    0,      None, 0]
+        # pu = [None,  None,   None, None,   None, None]
+        pl = [None,  None,   None, None,   None, None]
+        pu = [None,  None,   None, None,   None, None]
     else:
         exit(f'need to add function: {type_}')
 
-    model = "model {\n" + model_core(pn, star=star, bg=bg, pt=pt) + \
-            model_lnprob(pn, star=star, bg=bg, pt=pt, z_prior=z_prior)
+    model = "model {\n" + model_core(pn, gauss=type_ == 'gauss_bessel', star=star, bg=bg, pt=pt) + \
+            model_lnprob(pn, star=star, bg=bg, pt=pt, z_prior=z_prior) + "\n}"
 
-    generated_quantities = "generated quantities {" + model_core(pn, star=star, bg=bg, pt=pt, gq=gq) + "\n}"
+    generated_quantities = "generated quantities {" + model_core(pn, gauss=type_ == 'gauss_bessel', star=star, bg=bg, pt=pt, gq=gq) + "\n}"
 
     code = functions(type_) + data(pn, star=star, bg=bg, pt=pt) + transformed_data + \
-           parameters(pn, pl, pu, star=star, bg=bg, pt=pt, inc_lim=inc_lim, pa_lim=pa_lim) + \
+           parameters(pn, pl, pu, star=star, bg=bg, pt=pt, inc_lim=inc_lim,
+                      pa_lim=pa_lim, zh_lim=z_prior is not None) + \
            transformed_parameters(pn, star=star, bg=bg, pt=pt)
     if gq is not False:
         return code + generated_quantities

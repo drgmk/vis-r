@@ -39,26 +39,7 @@ u, v, Re, Im, w = vis_r.bin_uv(u, v, Re, Im, w, size_arcsec=sz)
 # set up the DHT
 arcsec = np.pi/180/3600
 arcsec2pi = arcsec*2*np.pi
-
-uvmax = np.max(np.sqrt(u**2 + v**2))
-uvmin = np.min(np.sqrt(u**2 + v**2))
-
-r_max = 10
-
-nhpt = 1
-while True:
-    q_tmp = jn_zeros(0, nhpt)[-1]
-    if q_tmp > uvmax * 2*np.pi*r_max*arcsec:
-        break
-    nhpt += 1
-
-h = frank.hankel.DiscreteHankelTransform(r_max*arcsec, nhpt)
-Rnk, Qnk = h.get_collocation_points(r_max*arcsec, nhpt)
-Qzero = np.append(0, Qnk)
-
-print(f'R_out: {r_max}, N: {nhpt}')
-print(f'min/max q_k: {Qnk[0]}, {Qnk[-1]}')
-print(f'min/max u,v: {uvmin}, {uvmax}')
+Rnk, Qzero, Ykm = vis_r.setup_dht(sz, u, v)
 
 # radial profile
 def r_prof(r, par):
@@ -72,7 +53,7 @@ def lnprob(p, test=False):
 
     # radial profile
     f = 1/2.35e-11*r_prof(Rnk/arcsec, p)
-    fth = h.transform(f, q=Qzero)
+    fth = np.dot(Ykm, f)  # same as fth = h.transform(f, q=Qzero)
 
     # normalise on shortest baseline
     fth = fth * p[4]/fth[0]
@@ -104,7 +85,7 @@ nwalkers = 18
 nsteps = 1000
 nthreads = 6
 
-# we are using emcee v3
+# run mcmc
 with mp.Pool(nthreads) as pool:
     sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, pool=pool)
     pos = [p0 + p0*0.01*np.random.randn(ndim) for i in range(nwalkers)]
@@ -128,7 +109,7 @@ for j in range(nwalkers):
 
 ax[-1, 0].set_xlabel('burn in')
 ax[-1, 1].set_xlabel('sampling')
-fig.savefig('example-chains.png')
+fig.savefig('hello_world-chains.png')
 
 p = np.median(sampler.chain[:, burn:, :].reshape((-1, ndim)), axis=0)
 ruv, fth, vis = lnprob(p, test=True)
@@ -138,4 +119,4 @@ ax.scatter(ruv/1e6, vis.real, s=0.1, color='yellow')
 ax.set_xlabel('baseline / M$\\lambda$')
 ax.set_ylabel('flux / Jy')
 fig.tight_layout()
-fig.savefig('example-vis.png')
+fig.savefig('hello_world-vis.png')

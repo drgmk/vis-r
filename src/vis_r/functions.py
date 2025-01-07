@@ -1,6 +1,101 @@
+import hashlib
+import os
 import numpy as np
 from scipy.stats import binned_statistic, binned_statistic_2d
 from scipy.special import erfc
+from scipy.special import jn_zeros
+import frank
+
+
+def pprint(cols):
+    """Print some columns nicely.
+    https://stackoverflow.com/questions/9989334/create-nice-column-output-in-python
+    """
+
+    po = np.get_printoptions()
+    np.set_printoptions(precision=3)
+
+    rows = []
+    for i in range(len(cols[0])):
+        # rows.append([str(c[i]) for c in cols])  # no dps for floats
+        tmp = []
+        for c in cols:
+            if isinstance(c[i], (float, np.floating)):
+                tmp.append(f'{c[i]:.3g}')
+            else:
+                tmp.append(str(c[i]))
+
+        rows.append(tmp)
+
+    widths = [max(map(len, col)) for col in zip(*rows)]
+    for row in rows:
+        print("  ".join((val.ljust(width) for val, width in zip(row, widths))))
+
+    np.set_printoptions(**po)
+
+
+def update_stanfile(code, file):
+    """Update stan file only if changed."""
+    hasher = hashlib.md5()
+    hasher.update(code.encode())
+    newhash = hasher.hexdigest()
+
+    hasher = hashlib.md5()
+    oldhash = ''
+    if os.path.exists(file):
+        with open(file) as f:
+            hasher.update(f.read().encode())
+            oldhash = hasher.hexdigest()
+
+    if newhash != oldhash:
+        with open(file, 'w') as f:
+            f.write(code)
+
+
+def add_default_parser(parser):
+    """Add parser arguments common to emcee/stan."""
+    parser.add_argument('--stan', dest='stan', action='store_true', default=True,
+                        help="Run stan version instead of emcee")
+    parser.add_argument('-v', dest='visfiles', metavar=('vis1.npy', 'vis2.npy'), nargs='+', required=True,
+                        help='Visibility files (u, v, re, im, w, wav, file)')
+    parser.add_argument('-t', dest='type', metavar='gauss', default='gauss',
+                        help='Model type (power[6], gauss[4])')
+    parser.add_argument('-g', dest='g', type=float, nargs=4, required=True,
+                        metavar=('dra', 'ddec', 'pa', 'inc'),
+                        help='Geometry parameters')
+    parser.add_argument('-p', dest='p', type=float, action='append', required=True, nargs='+',
+                        metavar='norm r ... zh',
+                        help='Radial component model parameters')
+    parser.add_argument('--z-lim', dest='zlim', metavar='zlim', type=float, default=0.2,
+                        help='1sigma upper prior on z/r_0')
+    parser.add_argument('--star', dest='star', metavar='flux',
+                        type=float, nargs=1, help='Point source at disk center')
+    parser.add_argument('--bg', dest='bg', metavar=('dra', 'ddec', 'f', 'r', 'pa', 'inc'), action='append',
+                        type=float, nargs=6, help='Resolved background sources')
+    parser.add_argument('--pt', dest='pt', metavar=('dra', 'ddec', 'f'), action='append',
+                        type=float, nargs=3, help='Unresolved background sources')
+    parser.add_argument('--out-rel', dest='outrel',  type=str, default='.',
+                        metavar='./',
+                        help='Path to output relative to first data file')
+    parser.add_argument('-o', dest='outdir',  type=str, default=None,
+                        help='Path to output (override --out-rel)')
+    parser.add_argument('--sz', dest='sz', metavar='8.84', type=float, default=8.84,
+                        help='Radius (arcsec) for uv binning')
+    parser.add_argument('--rew', dest='reweight', action='store_true', default=False,
+                        help="Reweight visibilities for chi^2(no model)=1")
+    parser.add_argument('--threads', dest='threads', metavar='6', type=int, default=6,
+                        help='Number of threads to run on')
+    parser.add_argument('--steps', dest='steps', metavar='1400', type=int, default=1400,
+                        help='Burn in/warmup steps for emcee/stan')
+    parser.add_argument('--keep', dest='keep', metavar='400', type=int, default=400,
+                        help='Posterior sampling steps for emcee/stan')
+    parser.add_argument('--no-model', dest='save_model', action='store_false', default=True,
+                        help="Don't save model")
+    parser.add_argument('--save-chains', dest='save_chains', action='store_true', default=False,
+                        help="Export model chains as numpy")
+    parser.add_argument('--input-model', dest='input_model', action='store_true', default=False,
+                        help="Use input parameters for model")
+    return parser
 
 
 def read_vis(f):
@@ -103,6 +198,77 @@ def bin_ruv(ruv, vis, bins=100):
     v, edges, _ = binned_statistic(ruv, vis, statistic='mean', bins=bins)
     ok = np.isfinite(v)
     return ((edges[:-1] + edges[1:])/2)[ok], v[ok]
+
+
+def load_data(args, astrom=False):
+    # load data
+    print(f'\nLoading data')
+    u = v = re = im = w = np.array([])
+    n_uv = []
+    sum_uv = 0
+    for i, f in enumerate(args.visfiles):
+        u_, v_, re_, im_, w_ = read_vis(f)
+        sum_uv += len(u_)
+        print(f' {f} with nvis: {len(u_)}')
+
+        reweight_factor = 2 * len(w_) / np.sum((re_**2.0 + im_**2.0) * w_)
+        print(f' reweighting factor would be {reweight_factor}')
+        if args.reweight:
+            print(' applying reweighting')
+            w_ *= reweight_factor
+
+        if args.sz > 0 and astrom:
+            nu = len(u_)
+            u_, v_, re_, im_, w_ = bin_uv(u_, v_, re_, im_, w_, size_arcsec=args.sz)
+            print(f" original nvis: {nu}, binned nvis: {len(u_)}")
+            n_uv.append(len(u_))
+
+        u = np.append(u, u_)
+        v = np.append(v, v_)
+        w = np.append(w, w_)
+        re = np.append(re, re_)
+        im = np.append(im, im_)
+
+    if args.sz > 0 and not astrom:
+        nu = len(u)
+        print('')
+        u, v, re, im, w = bin_uv(u, v, re, im, w, size_arcsec=args.sz)
+        print(f" original nvis: {nu}, binned nvis: {len(u)}")
+        n_uv = [len(u)]
+    else:
+        print(f"\nTotal nvis ({len(args.visfiles)} files): {sum_uv}, fitting nvis: {len(u)}")
+
+    return u, v, re, im, w, n_uv
+
+
+def setup_dht(sz, u, v, nhpt=300):
+    # set up the DHT
+    arcsec = np.pi/180/3600
+
+    uvmax = np.max(np.sqrt(u**2 + v**2))
+    uvmin = np.min(np.sqrt(u**2 + v**2))
+    if sz > 0:
+        uvmin_ = get_duv(size_arcsec=sz)
+    else:
+        uvmin_ = uvmin
+
+    # set up q array
+    nq = np.ceil((uvmax+uvmin_/2)/uvmin_)
+    r_out = jn_zeros(0, nq+1)[-1] / (2*np.pi*uvmax) / arcsec
+    Qzero = np.arange(nq) * uvmin_ + uvmin_/2
+    Qzero = np.append(0, Qzero)
+
+    # set up transform, pre-computing new matrix for transform
+    h = frank.hankel.DiscreteHankelTransform(r_out*arcsec, nhpt)
+    Rnk, Qnk = h.get_collocation_points(r_out*arcsec, nhpt)
+    Ykm = h.coefficients(q=Qzero)
+
+    print(f'\nNq: {nq+1}, Nhpt: {nhpt}')
+    pprint(([' min/max q_k: ', ' min/max u,v:'],
+            [f'{Qzero[1]:.0f}', f'{uvmin:.0f}'],
+            [f'{Qzero[-1]:.0f}', f'{uvmax:.0f}']))
+
+    return Rnk, Qzero, Ykm
 
 
 def uv_trans(u, v, PA, inc, return_uv=False):
