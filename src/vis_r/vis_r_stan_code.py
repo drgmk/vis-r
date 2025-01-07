@@ -465,6 +465,18 @@ def get_code(type_, star=False, bg=False, pt=False, gq=False,
         # pu = [None,  None,  None, 0,    None]
         pl = [None,  None,  None, None, None]
         pu = [None,  None,  None, None, None]
+    elif type_ == 'gauss' or type_ == 'gauss_bessel':
+        pn = ['norm', 'r', 'dr']
+        # pl = [0,       0,   0]
+        # pu = [None,  None,  None]
+        pl = [None,  None,  None]
+        pu = [None,  None,  None]
+    elif type_ == 'gauss2':
+        pn = ['norm', 'r', 'dri', 'dro']
+        # pl = [0,       0,   0,     0]
+        # pu = [None,  None,  None,  None]
+        pl = [None,  None,  None,  None]
+        pu = [None,  None,  None,  None]
     elif type_ == 'erf_power':
         pn = ['norm', 'r', 'sigi', 'ao']
         # pl = [0,       0,   0,      None]
@@ -477,25 +489,13 @@ def get_code(type_, star=False, bg=False, pt=False, gq=False,
         # pu = [None,  None,   None, None,   None, None]
         pl = [None,  None,   None, None,   None, None]
         pu = [None,  None,   None, None,   None, None]
-    elif type_ == 'gauss' or type_ == 'gauss_hankel':
-        pn = ['norm', 'r', 'dr']
-        # pl = [0,       0,   0]
-        # pu = [None,  None,  None]
-        pl = [None,  None,  None]
-        pu = [None,  None,  None]
-    elif type_ == 'gauss2':
-        pn = ['norm', 'r', 'dri', 'dro']
-        # pl = [0,       0,   0,     0]
-        # pu = [None,  None,  None,  None]
-        pl = [None,  None,  None,  None]
-        pu = [None,  None,  None,  None]
     else:
         exit(f'need to add function: {type_}')
 
-    model = "model {\n" + model_core(pn, gauss=type_ == 'gauss', star=star, bg=bg, pt=pt) + \
+    model = "model {\n" + model_core(pn, gauss=type_ == 'gauss_bessel', star=star, bg=bg, pt=pt) + \
             model_lnprob(pn, star=star, bg=bg, pt=pt, z_prior=z_prior) + "\n}"
 
-    generated_quantities = "generated quantities {" + model_core(pn, gauss=type_ == 'gauss', star=star, bg=bg, pt=pt, gq=gq) + "\n}"
+    generated_quantities = "generated quantities {" + model_core(pn, gauss=type_ == 'gauss_bessel', star=star, bg=bg, pt=pt, gq=gq) + "\n}"
 
     code = functions(type_) + data(pn, star=star, bg=bg, pt=pt) + transformed_data + \
            parameters(pn, pl, pu, star=star, bg=bg, pt=pt, inc_lim=inc_lim,

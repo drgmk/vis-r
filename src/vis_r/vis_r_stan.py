@@ -1,105 +1,44 @@
-import shutil
+# import shutil
 import os
 import argparse
+import logging
 import numpy as np
 from scipy.special import jn_zeros
+import cmdstanpy
 from cmdstanpy import CmdStanModel
 import matplotlib.pyplot as plt
 import arviz as az
 import corner
-import frank
 
 from . import functions
 from . import vis_r_stan_code
 
-"""
-Create M2 (arm-64) conda env with:
-
->CONDA_SUBDIR=osx-arm64 conda create -n stan python=3.11 ipython numpy scipy matplotlib
->conda activate stan
->conda env config vars set CONDA_SUBDIR=osx-arm64
->conda deactivate
->conda activate stan
->conda install -c conda-forge cmdstanpy corner arviz
->pip install https://github.com/drgmk/vis-r/archive/refs/heads/main.zip
-
-To update stan to the latest version, which will likely be
-more recent than in `conda` and will allow use of pathfinder
-to find initial parameters and estimate posteriors:
-```python
-import cmdstanpy
-cmdstanpy.install_cmdstan()
-```
-Then uncomment the code below to point `cmdstanpy` to this version:
-"""
-# import cmdstanpy
-# import glob
-# try:
-#     vs = glob.glob(os.path.expanduser('~') + '/.cmdstan/*')
-#     vs.sort()
-#     cmdstanpy.set_cmdstan_path(vs[0])
-# except:
-#     pass
-
-import cmdstanpy
-print(f'\nUsing cmdstan {cmdstanpy.cmdstan_version()} in\n{cmdstanpy.cmdstan_path()}\n')
-
-def vis_r_stan_radial():
+def vis_r_stan_radial(argv=None):
 
     # setup
-    parser = argparse.ArgumentParser(description='stan implementation of vis-r')
-    parser.add_argument('-v', dest='visfiles', metavar=('vis1.npy', 'vis2.npy'), nargs='+', required=True,
-                        help='Numpy save files (u, v, re, im, w, wav, file)')
-    parser.add_argument('-t', dest='type', metavar='power', default='power',
-                        help='Model type (power[6], gauss[4])')
-    parser.add_argument('-g', dest='g', type=float, nargs=4, required=True,
-                        metavar=('dra', 'ddec', 'pa', 'inc'),
-                        help='Geometry parameters')
-    parser.add_argument('-p', dest='p', type=float, action='append', required=True, nargs='+',
-                        metavar='norm r ... zh',
-                        help='Radial component model parameters')
-    parser.add_argument('-o', dest='outdir', metavar='./', type=str, default='./',
-                        help='Folder for output')
-    parser.add_argument('--sz', dest='sz', metavar='8.84', type=float, default=8.84,
-                        help='Radius (arcsec) for uv binning')
-    parser.add_argument('--sc', dest='sc', metavar='1', type=float, default=1,
+    parser = argparse.ArgumentParser(description='vis-r with stan')
+    parser = functions.add_default_parser(parser)
+    # stan specific args
+    parser.add_argument('--sc', dest='sc', metavar='10', type=float, default=10,
                         help='Scale parameters for std ~ 1')
     parser.add_argument('--norm-mul', dest='norm_mul', metavar='10', type=float, default=10,
-                        help='Scaling for norm')
-    parser.add_argument('--r-mul', dest='r_mul', metavar='1', type=float, default=1,
-                        help='Scaling for radius')
-    parser.add_argument('--star', dest='star', metavar='flux',
-                        type=float, nargs=1, help='Point source at disk center')
-    parser.add_argument('--bg', dest='bg', metavar=('dra', 'ddec', 'f', 'r', 'pa', 'inc'), action='append',
-                        type=float, nargs=6, help='Resolved background sources')
-    parser.add_argument('--pt', dest='pt', metavar=('dra', 'ddec', 'f'), action='append',
-                        type=float, nargs=3, help='Unresolved background sources')
-    parser.add_argument('--rmax', dest='rmax', metavar='rmax', type=float, default=None,
-                        help='Rmax for Hankel transform')
+                        help='Additional scaling for flux normalisation')
     parser.add_argument('--inc-lim', dest='inc_lim', action='store_true', default=False,
                         help="Limit range of inclinations")
     parser.add_argument('--pa-lim', dest='pa_lim', action='store_true', default=False,
                         help="limit range of position angles")
-    parser.add_argument('--z-lim', dest='zlim', metavar='zlim', type=float, default=None,
-                        help='1sigma upper limit on z/r')
-    parser.add_argument('--rew', dest='reweight', action='store_true', default=False,
-                        help="Reweight visibilities")
-    parser.add_argument('--no-save', dest='save', action='store_false', default=True,
-                        help="Don't save model")
-    parser.add_argument('--save-chains', dest='save_chains', action='store_true', default=False,
-                        help="Export model chains as numpy")
     parser.add_argument('--no-pf', dest='pf', action='store_false', default=True,
                         help="Don't run pathfinder for initial posteriors")
+    parser.add_argument('--log', dest='log', action='store_true', default=False,
+                        help="Save cmdstanpy logger output")
 
-    args = parser.parse_args()
+    if argv is not None:
+        args = parser.parse_args(args=argv[1:])
+    else:
+        args = parser.parse_args()
 
-    outdir = args.outdir.rstrip()
-    if not os.path.exists(outdir):
-        os.mkdir(outdir)
-
-    standir = f'{outdir}/stan'
-    if not os.path.exists(standir):
-        os.mkdir(standir)
+    # print(f'\nUsing cmdstan {cmdstanpy.cmdstan_version()} with cmdstanpy {cmdstanpy.__version__} in\n'
+    #       f'{cmdstanpy.cmdstan_path()}')
 
     visfiles = args.visfiles
 
@@ -129,7 +68,7 @@ def vis_r_stan_radial():
         inits['sigi'] = p[:, 3]
         inits['ro'] = p[:, 4]
         inits['ao'] = p[:, 5]
-    elif args.type == 'gauss' or args.type == 'gauss_hankel':
+    elif args.type == 'gauss' or args.type == 'gauss_bessel':
         assert p.shape[1] == 4
         inits['dr'] = p[:, 2]
     elif args.type == 'gauss2':
@@ -176,6 +115,8 @@ def vis_r_stan_radial():
         data[f'{k}_0'] = inits[k]
         data[f'{k}_mul'] = mul[k]
 
+    mul = {}
+
     data['nbg'] = 0
     if args.bg:
         data['nbg'] = len(bg)
@@ -184,70 +125,56 @@ def vis_r_stan_radial():
     if args.pt:
         data['npt'] = len(pt)
 
-    # load data
-    u_ = v_ = re_ = im_ = w_ = np.array([])
-    for i, f in enumerate(visfiles):
-        u, v, re, im, w = functions.read_vis(f)
-        print(f'loading: {f} with nvis: {len(u)}')
-
-        reweight_factor = 2 * len(w) / np.sum((re**2.0 + im**2.0) * w)
-        print(f' reweighting factor would be {reweight_factor}')
-        if args.reweight:
-            print(' applying reweighting')
-            w *= reweight_factor
-
-        u_ = np.append(u_, u)
-        v_ = np.append(v_, v)
-        w_ = np.append(w_, w)
-        re_ = np.append(re_, re)
-        im_ = np.append(im_, im)
-
-    print('')
-    if args.sz > 0:
-        data['u'], data['v'], data['re'],  data['im'], data['w'] = \
-            functions.bin_uv(u_, v_, re_, im_, w_, size_arcsec=args.sz)
+    # set up output directory
+    if args.outdir:
+        outdir = args.outdir.rstrip()
     else:
-        data['u'] = u_
-        data['v'] = v_
-        data['re'] = re_
-        data['im'] = im_
-        data['w'] = w_
+        relpath = os.path.dirname(args.visfiles[0])
+        outdir = f'{relpath}/{args.outrel.rstrip()}/vis-r-stn_{data["nr"]}{args.type}'
+        if args.star:
+            outdir += '_star'
+        if args.bg:
+            outdir += f'_{nbg}bg'
+        if args.pt:
+            outdir += f'_{npt}pt'
 
+    if not os.path.exists(outdir):
+        try:
+            os.mkdir(outdir)
+        except FileNotFoundError:
+            print(f'Output dir could not be created, check path to\n{outdir}\nexists')
+            exit()
+
+    standir = f'{outdir}/stan'
+    if not os.path.exists(standir):
+        os.mkdir(standir)
+
+    # logging
+    cmdstanpy_logger = logging.getLogger("cmdstanpy")
+    if args.log:
+        cmdstanpy_logger.handlers = []
+        cmdstanpy_logger.setLevel(logging.DEBUG)
+        handler = logging.FileHandler(f'{standir}/cmdstanpy.log')
+        handler.setLevel(logging.DEBUG)
+        cmdstanpy_logger.addHandler(handler)
+    else:
+        cmdstanpy_logger.disabled = True
+
+    # load data
+    data['u'], data['v'], data['re'], data['im'], data['w'], _ = functions.load_data(args)
     data['nvis'] = len(data['u'])
     data['sigma'] = 1/np.sqrt(data['w'])
 
-    print(f" original nvis: {len(u_)}, fitting nvis: {data['nvis']}")
-
+    # setup DHT
     arcsec = np.pi/180/3600
-    uvmax = np.max(np.sqrt(data['u']**2 + data['v']**2))
-    uvmin = np.min(np.sqrt(data['u']**2 + data['v']**2))
-    if args.sz > 0:
-        uvmin_ = functions.get_duv(size_arcsec=args.sz)
-    else:
-        uvmin_ = uvmin
+    Rnk, Qzero, Ykm = functions.setup_dht(args.sz, data['u'], data['v'])
 
-    # set up q array
-    nq = int(np.ceil((uvmax+uvmin_/2)/uvmin_))
-    r_out = jn_zeros(0, nq+1)[-1] / (2*np.pi*uvmax) / arcsec
-    Qzero = np.arange(nq) * uvmin_ + uvmin_/2
-    Qzero = np.append(0, Qzero)
-
-    # set up transform, pre-computing new matrix for transform
-    nhpt = 300  # recommended by frank
-    h = frank.hankel.DiscreteHankelTransform(r_out*arcsec, nhpt)
-    Rnk, Qnk = h.get_collocation_points(r_out*arcsec, nhpt)
-
-    print(f'\nNq: {nq}, Nhpt: {nhpt}')
-    print(f' Q_min: {Qzero[1]}, uv_min: {uvmin}')
-    print(f' Q_max: {Qzero[-1]}, uv_max: {uvmax}')
-    print('')
-
-    data['nhpt'] = nhpt
-    data['nq'] = nq+1
-    data['Ykm'] = h.coefficients(q=Qzero)
+    data['nhpt'] = len(Rnk)
+    data['nq'] = len(Qzero)
+    data['Ykm'] = Ykm
     data['Rnk'] = Rnk/arcsec
     data['Qnk'] = Qzero
-    data['hnorm'] = 1/2.35e-11  #* (2 * np.pi * (r_out*arcsec)**2) / h._j_nN
+    data['hnorm'] = 1/2.35e-11  # * (2 * np.pi * (r_out*arcsec)**2) / h._j_nN
 
     # get stan code and compile
     code = vis_r_stan_code.get_code(args.type, gq=False,
@@ -267,7 +194,8 @@ def vis_r_stan_radial():
     # initial run with pathfinder to estimate parameter multipliers
     # so that metric is approximately unit diagonal (stan init)
     metric = 'dense'
-    if args.pf:
+    if args.pf and not args.input_model:
+        print('\nEstimate posteriors/multipliers with pathfinder')
         pf = model.pathfinder(data=data, inits=inits,
                               # output_dir=f'{outdir}/pf'
                               # show_console=True,
@@ -284,26 +212,45 @@ def vis_r_stan_radial():
         # metric = {'inv_metric': np.cov(pf.draws()[:, ok].T)}
         # print(np.diag(np.cov(pf.draws()[:, ok].T)))
 
+        # set multipliers for appropriate scale, it seems faster to
+        # set scale ~0.1 rather than 1
         for k in inits.keys():
             med = np.median(pf.stan_variable(f'{k}_'), axis=0)
             std = np.std(pf.stan_variable(f'{k}_'), axis=0)
-            data[f'{k}_mul'] = 1 / np.mean(std)  # comment if setting metric above
+            data[f'{k}_mul'] = 0.1 / np.mean(std)  # comment if setting metric above
             inits[k] = med * data[f'{k}_mul']
             data[f'{k}_0'] = inits[k]
 
-    fit = model.sample(data=data, chains=6,
+    print('\nFitting parameters (name, initial value, multiplier)')
+    print(f' model is: {args.type}')
+    print(  '------------------------------------------------------')
+    functions.pprint((range(len(inits.keys())), list(inits.keys()),
+                      [inits[k] / data[f'{k}_mul'] for k in inits.keys()],
+                      [f"{data[f'{k}_mul']:.2f}" for k in inits.keys()]))
+    print('')
+
+    fit = model.sample(data=data, chains=args.threads,
                        metric=metric,
-                       iter_warmup=1000, iter_sampling=300,
+                       iter_warmup=args.steps-args.keep, iter_sampling=args.keep,
                        inits=inits,
-                       save_warmup=True,
+                       save_warmup=False,
                        show_console=False,
                        refresh=50)
 
     # shutil.copy(fit.metadata.cmdstan_config['profile_file'], outdir)
 
-    df = fit.summary(percentiles=(5, 95))
-    print(df[df.index.str.contains('_') == False])
+    df = fit.summary(sig_figs=3, percentiles=[50])
+    df.drop(['MCSE', 'N_Eff/s'], axis=1, inplace=True)
+    df_print = df[df.index.str.contains('_') & np.invert(df.index.str.contains('__'))].copy()
+    med = df_print['50%']
+    df_print.drop(['50%'], inplace=True, axis=1)
+    df_print['StdDev (sc)'] = 0.
+    for k in df_print.index:
+        df_print.loc[k, 'StdDev (sc)'] = df.loc[k.replace('_',''), 'StdDev']
+    print(df_print)
     # print(fit.diagnose())
+
+    print(f'\nOutput in {outdir}')
 
     xr = fit.draws_xr()
     for k in inits.keys():
@@ -311,7 +258,8 @@ def vis_r_stan_radial():
 
     if args.save_chains:
         # fit.save_csvfiles(outdir)
-        np.save(f'{outdir}/chains.npy', xr.to_dataarray().as_numpy().squeeze())
+        chains = np.array(xr.to_dataarray().as_numpy().squeeze())
+        np.save(f'{outdir}/chains.npy', np.moveaxis(chains, 0, -1))
 
     _ = az.plot_trace(xr)
     fig = _.ravel()[0].figure
@@ -324,14 +272,13 @@ def vis_r_stan_radial():
             best[k] = np.median(fit.stan_variable(k), axis=0)
     # print(f'best: {best}')
 
-    # comment if memory problems ("python killed")
-    fig = corner.corner(xr, show_titles=True)
-    fig.savefig(f'{outdir}/corner.pdf')
+    if not args.input_model:
+        np.save(f'{outdir}/best_params.npy', np.vstack(([s for s in df_print.index], med, df_print['StdDev'])))
 
     # save model visibilities
-    if args.save:
+    if args.save_model:
 
-        # how to generate and save radial profiles from the sampling
+    # how to generate and save radial profiles from the sampling
         if 0:
             code = vis_r_stan_code.get_code(args.type, gq='prof',
                                             star=args.star is not None,
@@ -370,13 +317,14 @@ def vis_r_stan_radial():
         model = CmdStanModel(stan_file=stanfile,
                              cpp_options={'STAN_THREADS': 'TRUE'})
 
-        for k in inits.keys():
-            inits[k] = best[f'{k}_'] * mul[k]
-        fit1 = model.sample(data=data, inits=inits, fixed_param=True, adapt_engaged=False,
-                            chains=1, iter_warmup=0, iter_sampling=1)
+        if not args.input_model:
+            for k in inits.keys():
+                inits[k] = best[f'{k}_'] * data[f'{k}_mul']
+        else:
+            print(' ignoring fitting and using initial parameters for model')
 
         for f in visfiles:
-            print(f'saving model for {os.path.basename(f)}')
+            print(f' saving model for {os.path.basename(f)}')
             u, v, re, im, w = functions.read_vis(f)
 
             data['nvis'] = len(u)
@@ -385,8 +333,15 @@ def vis_r_stan_radial():
             data['re'] = re
             data['im'] = im
             data['sigma'] = 1/np.sqrt(w)
-            gq = model.generate_quantities(data=data, previous_fit=fit1)
+            # set iter_warmup=1; seems to be a bug in cmdstanpy where adapt_engaged=False not recognised
+            gq = model.sample(data=data, inits=inits, fixed_param=True, adapt_engaged=False,
+                              chains=1, iter_warmup=1, iter_sampling=1,
+                              show_console=False, show_progress=False)
             vis_mod = gq.stan_variables()['vismod_re'] + 1j*gq.stan_variables()['vismod_im']
             f_ = os.path.splitext(os.path.basename(f))
             f_save = f_[0] + '-vismod' + f_[1]
-            np.save(f"{outdir}/{f_save}", vis_mod)
+            np.save(f"{outdir}/{f_save}", vis_mod.squeeze())
+
+    # make a corner plot (may run out of memory for many parameters so do last)
+    fig = corner.corner(xr, show_titles=True)
+    fig.savefig(f'{outdir}/corner.pdf')
