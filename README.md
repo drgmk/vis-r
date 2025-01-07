@@ -38,6 +38,12 @@ in this folder.
 
 ### Fitting
 
+First, export your visibilities from the ms file to a text or numpy file.
+Examples that do this are [here](https://github.com/drgmk/alma/blob/a10e4e40e84ff3a25dfa3b0067fec5f4c3713b1d/alma/casa.py#L226)
+and [here](https://github.com/dlmatra/miao/blob/master/utils/mstonumpyortxt_multiple.py).
+These will export whatever is in the ms, so discard any calibration and flagged data, and it is
+best to do some averaging first to keep the size of the exported file down.
+
 Run the fitting on some visibilities like so
 ```shell
 vis-r -v data/HD109573.12m*npy -g 0.012 -0.035 26.6 76.5 -p 0.013 1.07 0.06 0.01
@@ -55,6 +61,10 @@ vis-r -v data/HD109573.12m*npy --stan -g 0.012 -0.035 26.6 76.5 -p 0.013 1.07 0.
  warmup/sampling steps, but `stan` will yield many more independent samples
  for a given number of steps.
  
+To evaluate the model, viewing residuals is normally very helpful.
+Subtract the best fit model (`*vismod.npy`) from the ms from which the visibilities
+were exported, an example function is [here](https://github.com/drgmk/alma/blob/a10e4e40e84ff3a25dfa3b0067fec5f4c3713b1d/alma/casa.py#L82).
+
 The suggested method of fitting is to initially use rather hard u,v averaging
 with the `--sz` parameter, setting it to something similar to the disk size,
 or even smaller. Runs should complete quickly, give reasonable parameter 
