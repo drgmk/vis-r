@@ -37,6 +37,9 @@ cd ../
 
 cd examples
 
+exit()
+
+
 # in python/casa, make residual images
 import alma.casa
 from casatasks import tclean,exportfits
