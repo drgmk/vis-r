@@ -1,25 +1,24 @@
 vis-r
 -----
 
-A method for rapid radial profile modelling of interferometric visibilities.
-The article outlines the method, and this repo contains some code,
-which may do what you want. If it doesn't, 
-roll your own, perhaps starting with `examples/hello_world.py`.
+`vis-r` is a method and the associated code for rapid radial profile modelling of interferometric visibilities.
+The article in RASTI outlines the method (summarised in the figure below), and this repo contains some code,
+which may be sufficient for what you want. If it isn't you can roll your own, and if you need help please ask!
 
-A minimal version is outlined in a hello world script [here](examples/hello_world.py).
-If you clone this repo, install a new env and the `vis-r` package, and `cd`
-into the examples directory it should run with`python hello_world.py`
+![img](doc/vis-r.png)
 
 The `vis-r` executable in the install below will model multiple sets of 
-visibilities exported from an ms file. There are `stan` and `python/emcee` 
+visibilities exported from an ms file (try `python hello_world.py` in the examples folder). There are `stan` and `python/emcee` 
 versions that are generally the same, but with minor differences.
-It assumes a single disk plane, but can include multiple radial components 
+Both assume a single disk plane, but can include multiple radial components 
 with independent vertical scales, though these must all be of the same type 
 (e.g. Gaussian, power). Each set of visibilities can have independent offset
 parameters in the `emcee` version.  Compact central star, point, and Gaussian
-sources can also be included. All of this is fairly easy to change for your
-use case, e.g. a model with mutiple disk components
-could also have independent orientations for each.
+sources can also be included.
+
+All of this is fairly easy to change for your use case, e.g. a model with multiple disk components
+could also have independent orientations for each. If you make such changes let
+me know since they could be helpful for others. 
 
 ### Install
 
@@ -42,7 +41,7 @@ First, export your visibilities from the ms file to a text or numpy file.
 Examples that do this are [here](https://github.com/drgmk/alma/blob/a10e4e40e84ff3a25dfa3b0067fec5f4c3713b1d/alma/casa.py#L226)
 and [here](https://github.com/dlmatra/miao/blob/master/utils/mstonumpyortxt_multiple.py).
 These will export whatever is in the ms, so discard any calibration and flagged data, and it is
-best to do some averaging first to keep the size of the exported file down.
+best to do some averaging first (e.g. 30s time intervals, a few channels per spw) to keep the size of the exported file down.
 
 Run the fitting on some visibilities like so
 ```shell
