@@ -23,7 +23,7 @@
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Basic setup. Most papers should leave these options alone.
-\documentclass[fleqn,usenatbib]{mnras}
+\documentclass[fleqn,usenatbib]{rasti}
 
 % MNRAS is set in Times font. If you don't have this installed (most LaTeX
 % installations will be fine) or prefer the old Computer Modern fonts, comment
@@ -265,7 +265,7 @@ A second comparison is among different levels of averaging, as shown in Figure \
 
 \begin{figure}
     \centering
-    \includegraphics[width=0.45\textwidth]{doc/timing.png}
+    \includegraphics[width=0.45\textwidth]{timing.png}
     \caption{Execution times for imaging, and the \textsc{emcee} and \textsc{stan} implementations of \textsc{vis-r}. The x-axis, $\Delta \theta$, dictates how hard the visibility averaging is, and therefore how fast \textsc{vis-r} runs. $\Delta \theta = \infty$ corresponds to no averaging. The time for the \textsc{stan} implementation in this case is not shown, but is about 5.5\,h.}
     \label{fig:timing}
 \end{figure}
@@ -286,7 +286,7 @@ Two example fitting results are shown here; those for HR~4796 as modelled above,
 
 \begin{figure}
     \centering
-    \hspace{-0.5cm}\includegraphics[width=0.5\textwidth]{doc/resid_hr4796.pdf}
+    \hspace{-0.5cm}\includegraphics[width=0.5\textwidth]{resid_hr4796.pdf}
     \caption{Data (left panel) and residuals (right panel) for the \textsc{vis-r} model of HR~4796.}
     \label{fig:hr4796resid}
 \end{figure}
@@ -298,7 +298,7 @@ The AS~209 data have $2 \times 10^6$ visibilities after the data are averaged to
 
 \begin{figure}
     \centering
-    \hspace{-0.5cm}\includegraphics[width=0.5\textwidth]{doc/resid_as209.pdf}
+    \hspace{-0.5cm}\includegraphics[width=0.5\textwidth]{resid_as209.pdf}
     \caption{Data (left panel) and residuals (right panel) for the \textsc{vis-r} model of AS~209.}
     \label{fig:as209resid}
 \end{figure}
