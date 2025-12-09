@@ -1,8 +1,10 @@
 vis-r
 -----
 
+[![ascl:2511.022](https://img.shields.io/badge/ascl-2511.022-blue.svg?colorB=262255)](https://ascl.net/2511.022)
+
 `vis-r` is a method and the associated code for rapid radial profile modelling of interferometric visibilities.
-The article in RASTI outlines the method (summarised in the figure below), and this repo contains some code,
+The [article in RASTI](https://ui.adsabs.harvard.edu/abs/2025RASTI...4....4D) outlines the method (summarised in the figure below), and this repo contains some code,
 which may be sufficient for what you want. If it isn't you can roll your own, and if you need help please ask!
 
 ![img](doc/vis-r.png)

@@ -1,0 +1,40 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: vis-r
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Grant M.
+    family-names: Kennedy
+identifiers:
+  - type: doi
+    value: 10.1093/rasti/rzaf004
+    description: RASTI Article
+  - type: other
+    value: '2511.022'
+    description: ascl-id
+repository-code: 'https://github.com/drgmk/vis-r'
+abstract: >-
+  vis-r converts parametric radial surface-brightness
+  profiles directly into model visibilities for
+  radio-interferometric data using a Discrete Hankel
+  Transform. It supports disks with one or more radial
+  components, optional vertical scale height, and can
+  include compact or Gaussian central sources or point
+  sources. Model fitting can be performed using either the
+  emcee sampler or a Stan backend, with options for
+  independent astrometry per visibility dataset in the emcee
+  implementation. This method enables fitting parametric
+  radial models directly to visibility data without the need
+  to generate full images.
+keywords:
+  - interferometry
+  - modelling
+license: MIT
+commit: 109b939
+version: 0.1.0
+date-released: '2025-02-17'
